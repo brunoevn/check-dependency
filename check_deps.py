@@ -843,7 +843,7 @@ def run_pip_checker(args):
 # ==============================================================================
 
 def find_nuget_files(path):
-    """Finds CSPROJ/packages.config and project.assets.json in obj directory."""
+    """Finds MSBuild project files (.csproj, .vbproj, .fsproj, packages.config) and project.assets.json."""
     manifest = None
     assets_file = None
     
@@ -851,10 +851,10 @@ def find_nuget_files(path):
         if os.path.isdir(path):
             files = os.listdir(path)
             for f in files:
-                if f.endswith(".csproj") or f == "packages.config":
+                if f.endswith((".csproj", ".vbproj", ".fsproj")) or f == "packages.config":
                     manifest = os.path.join(path, f)
                     break
-        elif os.path.isfile(path) and (path.endswith(".csproj") or path.endswith(".config")):
+        elif os.path.isfile(path) and (path.endswith((".csproj", ".vbproj", ".fsproj")) or path.endswith(".config")):
             manifest = path
             
     # Search for project.assets.json under obj/
@@ -867,7 +867,7 @@ def find_nuget_files(path):
     return manifest, assets_file
 
 def parse_csproj_or_config(path):
-    """Finds and parses .csproj or packages.config files in a directory."""
+    """Finds and parses MSBuild project files (.csproj, .vbproj, .fsproj) or packages.config files in a directory."""
     dependencies = {}
     
     config_file = os.path.join(path, "packages.config")
@@ -885,9 +885,9 @@ def parse_csproj_or_config(path):
             print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing packages.config: {e}{COLOR_RESET}")
             
     try:
-        csproj_files = [f for f in os.listdir(path) if f.endswith(".csproj")]
-        if csproj_files:
-            csproj_path = os.path.join(path, csproj_files[0])
+        proj_files = [f for f in os.listdir(path) if f.endswith((".csproj", ".vbproj", ".fsproj"))]
+        if proj_files:
+            csproj_path = os.path.join(path, proj_files[0])
             tree = ET.parse(csproj_path)
             root = tree.getroot()
             
@@ -907,7 +907,7 @@ def parse_csproj_or_config(path):
                         
             return dependencies
     except Exception as e:
-        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing csproj files: {e}{COLOR_RESET}")
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing project files: {e}{COLOR_RESET}")
         
     return {}
 

@@ -8,7 +8,7 @@ Designed with a modular and extensible architecture, it supports checking direct
 
 ## Key Features
 
-- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), and .NET / C# (`nuget`) dependencies.
+- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), and .NET (`nuget`, including C# `.csproj`, VB.NET `.vbproj`, and F# `.fsproj`) dependencies.
 - **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments.
 - **Deprecation Warnings**: 
   - For `npm`: Extracts maintainer deprecation notices for exact installed versions.
@@ -51,15 +51,15 @@ Specify the target ecosystem via `--tech` (or `-t`) and the directory via `--pat
   ```powershell
   python check_deps.py --tech pip --path ./python_project
   ```
-- **For .NET / C# (nuget)**:
+- **For .NET (nuget)**:
   ```powershell
-  python check_deps.py --tech nuget --path ./csharp_project
+  python check_deps.py --tech nuget --path ./dotnet_project
   ```
 
 ### 2. Scan Security Vulnerabilities
 Add the `--vuls` (or `-v`) flag to audit packages against Google's OSV database:
 ```powershell
-python check_deps.py --tech nuget --path ./csharp_project --vuls
+python check_deps.py --tech nuget --path ./dotnet_project --vuls
 ```
 
 ### 3. Scan All Dependencies (Direct + Transitive)
@@ -68,22 +68,22 @@ Add the `--all` (or `-a`) flag to scan the entire tree resolved in lockfiles/ass
   ```powershell
   python check_deps.py --tech npm --path ./nodejs_project --all --vuls
   ```
-- **For .NET / C# (nuget)**:
+- **For .NET (nuget)**:
   ```powershell
-  python check_deps.py --tech nuget --path ./csharp_project --all --vuls
+  python check_deps.py --tech nuget --path ./dotnet_project --all --vuls
   ```
 *(For pip, if your `requirements.txt` contains transitive comments from `pip-compile`, the script will automatically parse and display parent tracing details).*
 
 ### 4. Export Report Files
 Output findings into structured Markdown (`.md`) or raw JSON (`.json`) files using `--output` (or `-o`):
 ```powershell
-python check_deps.py --tech nuget --path ./csharp_project --vuls --output dependency_report.md
+python check_deps.py --tech nuget --path ./dotnet_project --vuls --output dependency_report.md
 ```
 
 ### 5. Show Up-to-Date Packages
 By default, the tool only shows packages that have issues (outdated, deprecated, vulnerable, or errored). Use `--show-all` to list all packages:
 ```powershell
-python check_deps.py --tech nuget --path ./csharp_project --show-all
+python check_deps.py --tech nuget --path ./dotnet_project --show-all
 ```
 
 ---
@@ -93,7 +93,7 @@ python check_deps.py --tech nuget --path ./csharp_project --show-all
 | Argument | Short | Default | Description |
 | --- | --- | --- | --- |
 | `--tech` | `-t` | *Required* | The package manager / technology to check. Choices: `npm`, `pip`, `nuget`. |
-| `--path` | `-p` | `.` | Directory containing the package files (e.g. `.csproj`, `package.json`, or `requirements.txt`). |
+| `--path` | `-p` | `.` | Directory containing the package files (e.g. `.csproj`, `.vbproj`, `.fsproj`, `package.json`, or `requirements.txt`). |
 | `--vuls` | `-v` | `False` | Enable security vulnerability queries via Google OSV API. |
 | `--all` | `-a` | `False` | Scan all dependencies resolved in lockfile, rather than direct ones. |
 | `--concurrent` | `-c` | `10` | Number of concurrent network request threads to run. |
