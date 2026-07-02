@@ -1498,9 +1498,74 @@ def run_composer_checker(args):
 # Java / Maven Checker Logic
 # ==============================================================================
 
-def parse_maven_pom(filepath):
-    """Parses Maven pom.xml for direct dependencies, interpolating properties."""
+def parse_maven_dependency_management(root, prefix, properties):
+    """Parses dependencyManagement section to extract centrally managed versions."""
+    dep_mgmt = {}
+    dep_mgmt_elem = root.find(f"{prefix}dependencyManagement")
+    if dep_mgmt_elem is not None:
+        deps_elem = dep_mgmt_elem.find(f"{prefix}dependencies")
+        if deps_elem is not None:
+            for dep in deps_elem.findall(f"{prefix}dependency"):
+                g_elem = dep.find(f"{prefix}groupId")
+                a_elem = dep.find(f"{prefix}artifactId")
+                v_elem = dep.find(f"{prefix}version")
+                
+                if g_elem is not None and a_elem is not None and v_elem is not None:
+                    group = g_elem.text.strip() if g_elem.text else ""
+                    artifact = a_elem.text.strip() if a_elem.text else ""
+                    version = v_elem.text.strip() if v_elem.text else ""
+                    
+                    # Interpolate properties
+                    for prop_name, prop_val in properties.items():
+                        group = group.replace(prop_name, prop_val)
+                        artifact = artifact.replace(prop_name, prop_val)
+                        version = version.replace(prop_name, prop_val)
+                        
+                    if group and artifact and version:
+                        dep_mgmt[f"{group}:{artifact}"] = version
+    return dep_mgmt
+
+def find_all_maven_poms(root_pom_path):
+    """Recursively finds all module pom.xml files declared in a parent pom.xml."""
+    poms = [os.path.abspath(root_pom_path)]
+    root_dir = os.path.dirname(os.path.abspath(root_pom_path))
+    
+    try:
+        tree = ET.parse(root_pom_path)
+        root = tree.getroot()
+        
+        ns = ""
+        if "}" in root.tag:
+            ns = root.tag.split("}")[0].lstrip("{")
+        prefix = f"{{{ns}}}" if ns else ""
+        
+        modules_elem = root.find(f"{prefix}modules")
+        if modules_elem is not None:
+            for mod in modules_elem.findall(f"{prefix}module"):
+                if mod.text:
+                    module_name = mod.text.strip()
+                    module_path = module_name.replace("\\", "/")
+                    module_pom = os.path.join(root_dir, module_path, "pom.xml")
+                    if os.path.exists(module_pom):
+                        poms.extend(find_all_maven_poms(module_pom))
+    except Exception:
+        pass
+        
+    seen = set()
+    unique_poms = []
+    for p in poms:
+        if p not in seen:
+            seen.add(p)
+            unique_poms.append(p)
+            
+    return unique_poms
+
+def parse_maven_pom(filepath, parent_dep_mgmt=None):
+    """Parses Maven pom.xml for direct dependencies, interpolating properties and dependencyManagement."""
     dependencies = {}
+    if parent_dep_mgmt is None:
+        parent_dep_mgmt = {}
+        
     try:
         tree = ET.parse(filepath)
         root = tree.getroot()
@@ -1510,6 +1575,7 @@ def parse_maven_pom(filepath):
             ns = root.tag.split("}")[0].lstrip("{")
         prefix = f"{{{ns}}}" if ns else ""
         
+        # Parse properties
         properties = {}
         props_elem = root.find(f"{prefix}properties")
         if props_elem is not None:
@@ -1527,26 +1593,38 @@ def parse_maven_pom(filepath):
             if not properties["${project.groupId}"]:
                 properties["${project.groupId}"] = (parent_elem.findtext(f"{prefix}groupId") or "").strip()
                 
-        for dep in root.iter(f"{prefix}dependency"):
-            g_elem = dep.find(f"{prefix}groupId")
-            a_elem = dep.find(f"{prefix}artifactId")
-            v_elem = dep.find(f"{prefix}version")
-            
-            if g_elem is not None and a_elem is not None:
-                group = g_elem.text.strip() if g_elem.text else ""
-                artifact = a_elem.text.strip() if a_elem.text else ""
+        # Parse local dependencyManagement
+        local_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
+        merged_dep_mgmt = {**parent_dep_mgmt, **local_dep_mgmt}
+        
+        # Parse active dependencies
+        deps_elem = root.find(f"{prefix}dependencies")
+        if deps_elem is not None:
+            for dep in deps_elem.findall(f"{prefix}dependency"):
+                g_elem = dep.find(f"{prefix}groupId")
+                a_elem = dep.find(f"{prefix}artifactId")
+                v_elem = dep.find(f"{prefix}version")
                 
-                for prop_name, prop_val in properties.items():
-                    group = group.replace(prop_name, prop_val)
-                    artifact = artifact.replace(prop_name, prop_val)
+                if g_elem is not None and a_elem is not None:
+                    group = g_elem.text.strip() if g_elem.text else ""
+                    artifact = a_elem.text.strip() if a_elem.text else ""
                     
-                if group and artifact:
-                    version = (v_elem.text.strip() if v_elem is not None and v_elem.text else "*")
                     for prop_name, prop_val in properties.items():
-                        version = version.replace(prop_name, prop_val)
+                        group = group.replace(prop_name, prop_val)
+                        artifact = artifact.replace(prop_name, prop_val)
                         
-                    dependencies[f"{group}:{artifact}"] = version
-                    
+                    if group and artifact:
+                        coord = f"{group}:{artifact}"
+                        version = "*"
+                        if v_elem is not None and v_elem.text:
+                            version = v_elem.text.strip()
+                            for prop_name, prop_val in properties.items():
+                                version = version.replace(prop_name, prop_val)
+                        elif coord in merged_dep_mgmt:
+                            version = merged_dep_mgmt[coord]
+                            
+                        dependencies[coord] = version
+                        
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing pom.xml: {e}{COLOR_RESET}")
         
@@ -1691,7 +1769,7 @@ def check_all_maven_targets(targets, max_workers):
     return results
 
 def run_maven_checker(args):
-    """Main orchestrator for Maven dependency checker."""
+    """Main orchestrator for Maven dependency checker, supporting multi-module poms recursively."""
     manifest = None
     if os.path.exists(args.path):
         if os.path.isdir(args.path):
@@ -1705,9 +1783,42 @@ def run_maven_checker(args):
         print(f"{COLOR_RED}{ICON_ERROR} No pom.xml found in: {args.path}{COLOR_RESET}")
         return None, None, 0
         
-    print(f"{COLOR_GRAY}{ICON_INFO} Reading Maven pom.xml...{COLOR_RESET}")
-    pkg_data = parse_maven_pom(manifest)
+    print(f"{COLOR_GRAY}{ICON_INFO} Resolving Maven module tree...{COLOR_RESET}")
+    all_poms = find_all_maven_poms(manifest)
     
+    if len(all_poms) > 1:
+        print(f"{COLOR_GRAY}{ICON_INFO} Multi-module project detected. Found {len(all_poms)} modules.{COLOR_RESET}")
+        
+    # 1. Parse root pom.xml for centralized dependencyManagement versions
+    root_dep_mgmt = {}
+    try:
+        tree = ET.parse(manifest)
+        root = tree.getroot()
+        ns = root.tag.split("}")[0].lstrip("{") if "}" in root.tag else ""
+        prefix = f"{{{ns}}}" if ns else ""
+        
+        # Base properties for root dependencyManagement
+        properties = {}
+        props_elem = root.find(f"{prefix}properties")
+        if props_elem is not None:
+            for elem in props_elem:
+                tag_local = elem.tag.split("}")[-1]
+                properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
+                
+        properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
+        properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
+        
+        root_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading root dependencyManagement: {e}{COLOR_RESET}")
+        
+    # 2. Parse all module poms and merge active dependencies
+    pkg_data = {}
+    print(f"{COLOR_GRAY}{ICON_INFO} Reading Maven pom.xml modules...{COLOR_RESET}")
+    for pom in all_poms:
+        pom_deps = parse_maven_pom(pom, root_dep_mgmt)
+        pkg_data.update(pom_deps)
+        
     targets = []
     for name, declared_ver in pkg_data.items():
         targets.append({
