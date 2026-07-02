@@ -1,6 +1,6 @@
 # Dependency Status Report
 
-Generated on 2026-07-01 22:40:38
+Generated on 2026-07-01 22:48:03
 
 ## Summary
 
@@ -14,7 +14,7 @@ Generated on 2026-07-01 22:40:38
 | Package | Type | Declared | Installed | Latest | Status | Vuls | Note |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `certifi` | Transitive (via requests) | `==2022.12.7` | `2022.12.7` | `2026.6.17` | ❌ Major Update | ⚠️ **4** |  |
-| `charset-normalizer` | Transitive (via requests) | `==2.1.1` | `2.1.1` | `3.4.7` | ❌ Major Update | 0 |  |
+| `charset-normalizer` | Transitive (via requests) | `==2.1.1` | `2.1.1` | `3.4.7` | ❌ Major Update | ✅ |  |
 | `django` | Direct | `==4.0.0` | `4.0.0` | `6.0.6` | ❌ Major Update | ⚠️ **33** |  |
 | `idna` | Transitive (via requests) | `==3.4` | `3.4` | `3.18` | ⚠️ Minor Update | ⚠️ **4** |  |
 | `requests` | Direct | `==2.28.1` | `2.28.1` | `2.34.2` | ⚠️ Minor Update | ⚠️ **5** |  |
