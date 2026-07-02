@@ -616,6 +616,228 @@ def run_npm_checker(args):
     return results, pkg_data, elapsed
 
 # ==============================================================================
+# PIP Checker Logic
+# ==============================================================================
+
+def parse_requirements_txt(filepath):
+    """Parses requirements.txt to extract dependencies and parent traces."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        dependencies = {}
+        parents = {}
+        
+        last_pkg = None
+        pkg_re = re.compile(r'^\s*([A-Za-z0-9_.-]+)\s*(?:(==|>=|<=|~=|!=|>|<)\s*([A-Za-z0-9_.-]+))?')
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+                
+            if stripped.startswith("#"):
+                if stripped.startswith("# via") and last_pkg:
+                    parent_part = stripped[5:].strip()
+                    for p in parent_part.split(","):
+                        p_clean = p.strip()
+                        if p_clean:
+                            parents.setdefault(last_pkg, set()).add(p_clean)
+                continue
+                
+            if " #" in line:
+                parts = line.split(" #", 1)
+                stripped_line = parts[0].strip()
+                comment = parts[1].strip()
+            else:
+                stripped_line = stripped
+                comment = ""
+                
+            match = pkg_re.match(stripped_line)
+            if match:
+                pkg_name = match.group(1)
+                op = match.group(2)
+                ver = match.group(3)
+                
+                version_spec = f"{op}{ver}" if op and ver else ""
+                dependencies[pkg_name] = version_spec or "*"
+                last_pkg = pkg_name
+                
+                if comment.startswith("via"):
+                    parent_part = comment[3:].strip()
+                    for p in parent_part.split(","):
+                        p_clean = p.strip()
+                        if p_clean:
+                            parents.setdefault(pkg_name, set()).add(p_clean)
+                            
+        return dependencies, {k: list(v) for k, v in parents.items()}
+    except Exception as e:
+        print(f"{COLOR_RED}{ICON_ERROR} Error reading requirements.txt: {e}{COLOR_RESET}")
+        return None, None
+
+def check_pypi_package(target):
+    """Queries PyPI registry for package metadata and checks target version."""
+    name = target["name"]
+    declared = target["declared"]
+    installed_versions = target["installed"]
+    
+    versions_to_check = installed_versions if installed_versions else [declared]
+    results = []
+    
+    try:
+        encoded_name = urllib.parse.quote(name)
+        url = f"https://pypi.org/pypi/{encoded_name}/json"
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            
+        info = data.get("info", {})
+        latest_version = info.get("version")
+        releases = data.get("releases", {})
+        
+        for ver_str in versions_to_check:
+            # Clean version constraints prefixes
+            clean_ver = re.sub(r'^[^\d]*', '', ver_str) if ver_str else "0.0.0"
+            if not clean_ver:
+                clean_ver = "0.0.0"
+                
+            # Check yanking (deprecation)
+            files_list = releases.get(clean_ver) or releases.get(ver_str) or []
+            yanked_reason = None
+            for file_info in files_list:
+                if isinstance(file_info, dict) and file_info.get("yanked"):
+                    yanked_reason = file_info.get("yanked_reason") or "This release was yanked from PyPI."
+                    break
+                    
+            update_type = "up-to-date"
+            if latest_version and clean_ver != "0.0.0":
+                update_type = classify_update(clean_ver, latest_version)
+                
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": latest_version,
+                "status": update_type,
+                "deprecated": yanked_reason,
+                "error": None
+            })
+            
+    except urllib.error.HTTPError as e:
+        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": error_msg
+            })
+    except Exception as e:
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": str(e)
+            })
+            
+    return results
+
+def check_all_pip_targets(targets, max_workers):
+    """Executes PyPI checks concurrently and renders simple progress."""
+    results = []
+    total = len(targets)
+    completed = 0
+    
+    print(f"{COLOR_BOLD}{COLOR_CYAN}Checking {total} packages...{COLOR_RESET}\n")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_target = {executor.submit(check_pypi_package, t): t for t in targets}
+        
+        for future in as_completed(future_to_target):
+            completed += 1
+            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total}] Checking {future_to_target[future]['name']}...{COLOR_RESET}\033[K")
+            sys.stdout.flush()
+            
+            try:
+                res_list = future.result()
+                results.extend(res_list)
+            except Exception as e:
+                target = future_to_target[future]
+                results.append({
+                    "name": target["name"],
+                    "declared": target["declared"],
+                    "installed": target["installed"][0] if target["installed"] else target["declared"],
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": f"Thread error: {e}"
+                })
+                
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+    return results
+
+def run_pip_checker(args):
+    """Main orchestrator for pip checker."""
+    req_file = os.path.join(args.path, "requirements.txt")
+    
+    if not os.path.exists(req_file):
+        print(f"{COLOR_RED}{ICON_ERROR} No requirements.txt found in: {args.path}{COLOR_RESET}")
+        return None, None, 0
+        
+    print(f"{COLOR_GRAY}{ICON_INFO} Reading requirements.txt...{COLOR_RESET}")
+    dependencies, parents_data = parse_requirements_txt(req_file)
+    
+    if not dependencies:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
+        return None, None, 0
+        
+    targets = []
+    for name, spec in sorted(dependencies.items()):
+        installed = []
+        if spec.startswith("=="):
+            installed = [spec[2:]]
+            
+        targets.append({
+            "name": name,
+            "declared": spec,
+            "installed": installed
+        })
+        
+    start_time = time.time()
+    results = check_all_pip_targets(targets, args.concurrent)
+    
+    # Check vulnerabilities via OSV if requested
+    if getattr(args, "vuls", False):
+        tech_info = TECHNOLOGIES["pip"]
+        osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
+        
+        # Attach vulns back to results
+        for r in results:
+            key = (r["name"], r["installed"])
+            r["vulnerabilities"] = osv_vulns.get(key, [])
+    else:
+        for r in results:
+            r["vulnerabilities"] = []
+            
+    # Resolve transitive dependency parents
+    for r in results:
+        parents_list = parents_data.get(r["name"], [])
+        r["required_by"] = sorted(parents_list)
+        
+    elapsed = time.time() - start_time
+    
+    return results, {"dependencies": dependencies, "devDependencies": {}, "all_direct": dependencies}, elapsed
+
+# ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
 
@@ -719,6 +941,8 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
                 dep_type = "Direct"
             elif r["name"] in pkg_data.get("devDependencies", {}):
                 dep_type = "Dev"
+        if r.get("required_by"):
+            dep_type = "Transitive"
                 
         status_str = r["status"]
         color = COLOR_RESET
@@ -902,7 +1126,7 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
                     elif r["name"] in pkg_data.get("devDependencies", {}):
                         dep_type = "Dev"
                         
-                if dep_type == "Transitive" and r.get("required_by"):
+                if r.get("required_by"):
                     dep_type = f"Transitive (via {', '.join(r['required_by'])})"
                         
                 status_str = r["status"]
@@ -964,6 +1188,11 @@ TECHNOLOGIES = {
         "files": ["package.json", "package-lock.json"],
         "osv_ecosystem": "npm",
         "runner": run_npm_checker
+    },
+    "pip": {
+        "files": ["requirements.txt"],
+        "osv_ecosystem": "PyPI",
+        "runner": run_pip_checker
     }
 }
 
@@ -984,7 +1213,7 @@ Examples:
     parser.add_argument(
         "--tech", "-t",
         required=True,
-        choices=["npm"],
+        choices=["npm", "pip"],
         help="The package manager / technology to check."
     )
     parser.add_argument(
