@@ -99,6 +99,34 @@ python check_deps.py --tech nuget --path ./dotnet_project --show-all
 | `--concurrent` | `-c` | `10` | Number of concurrent network request threads to run. |
 | `--output` | `-o` | `None` | Path to export report file (detects `.json` and `.md` formats). |
 | `--show-all` | | `False` | Display all dependencies, even those up-to-date and secure. |
+| `--fail-on-vulns` | | `None` | Break the build (exit code 1) on security issues. Accepts threshold limits (e.g., `"critical:2,high:4"`). |
+
+---
+
+## CI/CD Pipeline Integration & Build Breaking
+
+For security auditing, you can use the `--fail-on-vulns` flag to automatically exit with status `1` (failing the pipeline build) if vulnerabilities are found.
+
+### Build Breaking Strategies
+
+1. **Fail on Any Vulnerability**:
+   Passing the argument without values defaults to failing if there is at least one vulnerability:
+   ```powershell
+   python check_deps.py --tech pip --path ./project --vuls --fail-on-vulns
+   ```
+
+2. **Custom Severity Thresholds (OR Logic)**:
+   Specify the exact severity limits as a comma-separated list of `severity:limit`. The build breaks if **any** limit is breached:
+   - Break if there are **at least 2 critical** vulnerabilities:
+     ```powershell
+     python check_deps.py --tech pip --path ./project --vuls --fail-on-vulns "critical:2"
+     ```
+   - Break if there are **at least 2 critical OR 4 high** vulnerabilities:
+     ```powershell
+     python check_deps.py --tech pip --path ./project --vuls --fail-on-vulns "critical:2,high:4"
+     ```
+
+Valid severity identifiers: `critical`, `high`, `medium`, `low`, `unknown`. (CVSS vector strings are parsed dynamically to extract their scores and map to these levels: Critical $\ge 9.0$, High $\ge 7.0$, Medium $\ge 4.0$, Low $\ge 0.1$).
 
 ---
 

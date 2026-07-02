@@ -1410,11 +1410,12 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
                     
                     # Highlight severity
                     sev_color = COLOR_GRAY
-                    if "CRITICAL" in severity.upper() or "HIGH" in severity.upper():
+                    level = get_severity_level(vuln)
+                    if level == "critical" or level == "high":
                         sev_color = COLOR_RED
-                    elif "MEDIUM" in severity.upper() or "MODERATE" in severity.upper():
+                    elif level == "medium":
                         sev_color = COLOR_YELLOW
-                    elif "LOW" in severity.upper():
+                    elif level == "low":
                         sev_color = COLOR_CYAN
                         
                     print(f"    - {COLOR_BOLD}{vid}{COLOR_RESET} [{sev_color}{severity}{COLOR_RESET}]: {summary}")
@@ -1579,6 +1580,128 @@ TECHNOLOGIES = {
     }
 }
 
+def calculate_cvss3_score(vector_str):
+    """Calculates base CVSS v3.x score from a vector string."""
+    try:
+        parts = {p.split(":")[0]: p.split(":")[1] for p in vector_str.split("/") if ":" in p}
+        
+        av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}.get(parts.get("AV"), 0.85)
+        ac = {"L": 0.77, "H": 0.44}.get(parts.get("AC"), 0.77)
+        ui = {"N": 0.85, "R": 0.62}.get(parts.get("UI"), 0.85)
+        scope = parts.get("S", "U")
+        
+        if scope == "C":
+            pr = {"N": 0.85, "L": 0.68, "H": 0.50}.get(parts.get("PR"), 0.85)
+        else:
+            pr = {"N": 0.85, "L": 0.62, "H": 0.27}.get(parts.get("PR"), 0.85)
+            
+        c = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("C"), 0.0)
+        i = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("I"), 0.0)
+        a = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("A"), 0.0)
+        
+        iss = 1 - (1 - c) * (1 - i) * (1 - a)
+        
+        if scope == "C":
+            impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
+        else:
+            impact = 6.42 * iss
+            
+        exploitability = 8.22 * av * ac * pr * ui
+        
+        if impact <= 0:
+            return 0.0
+            
+        if scope == "C":
+            score = 1.08 * (impact + exploitability)
+        else:
+            score = impact + exploitability
+            
+        score_val = min(score, 10.0)
+        int_val = int(score_val * 100)
+        if int_val % 10 == 0:
+            return int_val / 100.0
+        else:
+            return (int_val - (int_val % 10) + 10) / 100.0
+            
+    except Exception:
+        return None
+
+def get_severity_level(vuln):
+    """Determines the severity level (critical, high, medium, low, unknown) of a vulnerability."""
+    severity = vuln.get("severity", "UNKNOWN")
+    sev_upper = severity.upper()
+    
+    if "CRITICAL" in sev_upper:
+        return "critical"
+    if "HIGH" in sev_upper:
+        return "high"
+    if "MEDIUM" in sev_upper or "MODERATE" in sev_upper:
+        return "medium"
+    if "LOW" in sev_upper:
+        return "low"
+        
+    if "CVSS" in sev_upper:
+        m = re.search(r'(CVSS:3\.[0-9a-zA-Z/:.]+)', sev_upper)
+        if m:
+            vector = m.group(1)
+            score = calculate_cvss3_score(vector)
+            if score is not None:
+                if score >= 9.0:
+                    return "critical"
+                elif score >= 7.0:
+                    return "high"
+                elif score >= 4.0:
+                    return "medium"
+                elif score >= 0.1:
+                    return "low"
+                    
+    return "unknown"
+
+def check_pipeline_failure(results, fail_config):
+    """Checks if the vulnerability thresholds are breached to fail the build.
+    fail_config can be 'any' or a string like 'critical:2,high:4'.
+    """
+    if not fail_config:
+        return False
+        
+    total_vulns = 0
+    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0}
+    
+    for r in results:
+        for vuln in r.get("vulnerabilities", []):
+            total_vulns += 1
+            severity = get_severity_level(vuln)
+            if severity in severity_counts:
+                severity_counts[severity] += 1
+            else:
+                severity_counts["unknown"] += 1
+                
+    if fail_config == "any":
+        return total_vulns > 0
+        
+    try:
+        thresholds = {}
+        for part in fail_config.split(","):
+            if ":" in part:
+                sev, val = part.split(":", 1)
+                sev_clean = sev.strip().lower()
+                if sev_clean == "moderate":
+                    sev_clean = "medium"
+                thresholds[sev_clean] = int(val.strip())
+                
+        for sev, limit in thresholds.items():
+            if sev in severity_counts and severity_counts[sev] >= limit:
+                print(f"\n{COLOR_RED}{ICON_ERROR} CI/CD Threshold Breached: Found {severity_counts[sev]} {sev.upper()} vulnerabilities (Limit: {limit}){COLOR_RESET}")
+                return True
+            elif sev == "unknown" and severity_counts["unknown"] >= limit:
+                print(f"\n{COLOR_RED}{ICON_ERROR} CI/CD Threshold Breached: Found {severity_counts['unknown']} UNKNOWN vulnerabilities (Limit: {limit}){COLOR_RESET}")
+                return True
+    except Exception as e:
+        print(f"\n{COLOR_YELLOW}{ICON_WARN} Warning: Failed to parse --fail-on-vulns config '{fail_config}': {e}. Falling back to fail on any vulnerability.{COLOR_RESET}")
+        return total_vulns > 0
+        
+    return False
+
 def main():
     init_colors_and_encoding()
     
@@ -1629,6 +1752,13 @@ Examples:
         action="store_true",
         help="Check security vulnerabilities using the Google OSV database."
     )
+    parser.add_argument(
+        "--fail-on-vulns",
+        nargs="?",
+        const="any",
+        default=None,
+        help="Exit with code 1 if security vulnerabilities are found. Optionally specify thresholds, e.g., 'critical:2,high:4'."
+    )
     
     args = parser.parse_args()
     
@@ -1657,6 +1787,10 @@ Examples:
             export_markdown_report(results, pkg_data, args.output, args.vuls)
         else:
             print(f"{COLOR_YELLOW}{ICON_WARN} Unknown output format. Export supports .json or .md extension.{COLOR_RESET}")
+            
+    # Check if pipeline should fail
+    if args.fail_on_vulns and check_pipeline_failure(results, args.fail_on_vulns):
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
