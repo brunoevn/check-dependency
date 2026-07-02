@@ -128,6 +128,63 @@ For security auditing, you can use the `--fail-on-vulns` flag to automatically e
 
 Valid severity identifiers: `critical`, `high`, `medium`, `low`, `unknown`. (CVSS vector strings are parsed dynamically to extract their scores and map to these levels: Critical $\ge 9.0$, High $\ge 7.0$, Medium $\ge 4.0$, Low $\ge 0.1$).
 
+### Pipeline Examples
+
+#### 1. GitHub Actions (`.github/workflows/dependency-scan.yml`)
+You can run the script and publish a formatted summary table directly to the run page:
+```yaml
+name: Dependency Vulnerability Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run Dependency Checker
+        run: |
+          python check_deps.py --tech npm --path ./ --vuls --fail-on-vulns "critical:1,high:3" --output report.md
+
+      - name: Publish Action Run Summary
+        if: always()
+        run: |
+          if [ -f report.md ]; then
+            cat report.md >> $GITHUB_STEP_SUMMARY
+          fi
+```
+
+#### 2. GitLab CI (`.gitlab-ci.yml`)
+Run the scanner in a Python environment, export the Markdown/JSON files, and upload them as job artifacts:
+```yaml
+stages:
+  - test
+
+dependency_scan:
+  stage: test
+  image: python:3.10-slim
+  script:
+    # Run audit, failing if there is at least 1 critical or 3 high vulnerabilities
+    - python check_deps.py --tech nuget --path ./ --all --vuls --fail-on-vulns "critical:1,high:3" --output report.md
+  artifacts:
+    name: "dependency-audit-report"
+    expose_as: "Dependency Audit Report"
+    when: always
+    paths:
+      - report.md
+```
+
 ---
 
 ## Design Considerations & Behavior
