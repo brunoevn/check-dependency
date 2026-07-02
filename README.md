@@ -8,7 +8,7 @@ Designed with a modular and extensible architecture, it supports checking direct
 
 ## Key Features
 
-- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), .NET (`nuget`, including C# `.csproj`, VB.NET `.vbproj`, and F# `.fsproj`), PHP (`php`, including `composer.json` / `composer.lock`), and Java (`maven`, including `pom.xml`) dependencies.
+- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), .NET (`nuget`, including C# `.csproj`, VB.NET `.vbproj`, F# `.fsproj`, and Solution files), PHP (`php`, including `composer.json` / `composer.lock`), and Java (`maven`, supporting properties, centralized `<dependencyManagement>`, and multi-module `<modules>` configurations).
 - **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments.
 - **Deprecation Warnings**: 
   - For `npm`: Extracts maintainer deprecation notices for exact installed versions.
@@ -86,6 +86,7 @@ Add the `--all` (or `-a`) flag to scan the entire tree resolved in lockfiles/ass
   python check_deps.py --tech php --path ./php_project --all --vuls
   ```
 *(For pip, if your `requirements.txt` contains transitive comments from `pip-compile`, the script will automatically parse and display parent tracing details).*
+*(For Java / Maven, if you point the path to a parent POM, the script will automatically discover and aggregate all sub-modules recursively).*
 
 ### 4. Export Report Files
 Output findings into structured Markdown (`.md`) or raw JSON (`.json`) files using `--output` (or `-o`):
