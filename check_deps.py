@@ -1854,6 +1854,252 @@ def run_maven_checker(args):
     return results, {"dependencies": pkg_data, "devDependencies": {}, "all_direct": pkg_data}, elapsed
 
 # ==============================================================================
+# Go Modules Checker Logic
+# ==============================================================================
+
+def escape_go_module(name):
+    """Encodes uppercase characters in Go module paths using the ! scheme."""
+    escaped = ""
+    for char in name:
+        if char.isupper():
+            escaped += "!" + char.lower()
+        else:
+            escaped += char
+    return escaped
+
+def parse_go_mod(filepath):
+    """Parses go.mod for direct and indirect dependencies."""
+    dependencies = {}
+    devDependencies = {}
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        in_require_block = False
+        single_req_pat = re.compile(r'^\s*require\s+([^\s]+)\s+([^\s]+)(?:\s+//\s*(indirect))?\s*$')
+        block_req_pat = re.compile(r'^\s*([^\s]+)\s+([^\s]+)(?:\s+//\s*(indirect))?\s*$')
+        
+        for line in lines:
+            line_strip = line.strip()
+            if not line_strip or line_strip.startswith("//"):
+                continue
+                
+            if line_strip == "require (":
+                in_require_block = True
+                continue
+            elif line_strip == ")":
+                in_require_block = False
+                continue
+                
+            if in_require_block:
+                m = block_req_pat.match(line_strip)
+                if m:
+                    pkg = m.group(1)
+                    ver = m.group(2)
+                    is_indirect = m.group(3) == "indirect"
+                    if is_indirect:
+                        devDependencies[pkg] = ver
+                    else:
+                        dependencies[pkg] = ver
+            else:
+                m = single_req_pat.match(line_strip)
+                if m:
+                    pkg = m.group(1)
+                    ver = m.group(2)
+                    is_indirect = m.group(3) == "indirect"
+                    if is_indirect:
+                        devDependencies[pkg] = ver
+                    else:
+                        dependencies[pkg] = ver
+                        
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing go.mod: {e}{COLOR_RESET}")
+        
+    return dependencies, devDependencies
+
+def check_go_package(target):
+    """Queries proxy.golang.org for Go module versions list."""
+    name = target["name"]
+    declared = target["declared"]
+    installed_versions = target["installed"]
+    
+    versions_to_check = installed_versions if installed_versions else [declared]
+    results = []
+    
+    try:
+        escaped_name = escape_go_module(name)
+        url = f"https://proxy.golang.org/{escaped_name}/@v/list"
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resp_data = response.read().decode("utf-8")
+            
+        versions_list = [v.strip() for v in resp_data.split("\n") if v.strip()]
+        
+        stable_versions = []
+        for v in versions_list:
+            v_lower = v.lower()
+            if not any(x in v_lower for x in ("-", "alpha", "beta", "rc", "dev")):
+                clean_v = v.split("+")[0]
+                stable_versions.append((v, clean_v))
+                
+        valid_versions = stable_versions if stable_versions else [(v, v.split("+")[0]) for v in versions_list]
+        
+        def parse_semver_key(v_tuple):
+            v_str = v_tuple[1].lstrip("v")
+            m = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?', v_str)
+            if m:
+                major = int(m.group(1))
+                minor = int(m.group(2))
+                patch = int(m.group(3)) if m.group(3) else 0
+                build = int(m.group(4)) if m.group(4) else 0
+                return (major, minor, patch, build)
+            return (0, 0, 0, 0)
+            
+        latest_version = None
+        if valid_versions:
+            sorted_versions = sorted(valid_versions, key=parse_semver_key)
+            latest_version = sorted_versions[-1][0]
+            
+        for ver_str in versions_to_check:
+            clean_ver = ver_str.lstrip("v").split("+")[0] if ver_str else "0.0.0"
+            clean_latest = latest_version.lstrip("v").split("+")[0] if latest_version else "0.0.0"
+            
+            update_type = "up-to-date"
+            if latest_version and clean_ver != "0.0.0":
+                update_type = classify_update(clean_ver, clean_latest)
+                
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": latest_version,
+                "status": update_type,
+                "deprecated": None,
+                "error": None
+            })
+            
+    except urllib.error.HTTPError as e:
+        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": error_msg
+            })
+    except Exception as e:
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": str(e)
+            })
+            
+    return results
+
+def check_all_go_targets(targets, max_workers):
+    """Executes Go modules checks concurrently and renders simple progress."""
+    results = []
+    total = len(targets)
+    completed = 0
+    
+    print(f"{COLOR_BOLD}{COLOR_CYAN}Checking {total} packages...{COLOR_RESET}\n")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_target = {executor.submit(check_go_package, t): t for t in targets}
+        
+        for future in as_completed(future_to_target):
+            completed += 1
+            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total}] Checking {future_to_target[future]['name']}...{COLOR_RESET}\033[K")
+            sys.stdout.flush()
+            
+            try:
+                res_list = future.result()
+                results.extend(res_list)
+            except Exception as e:
+                target = future_to_target[future]
+                results.append({
+                    "name": target["name"],
+                    "declared": target["declared"],
+                    "installed": target["installed"][0] if target["installed"] else target["declared"],
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": f"Thread error: {e}"
+                })
+                
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+    return results
+
+def run_go_checker(args):
+    """Main orchestrator for Go Modules checker."""
+    manifest = None
+    if os.path.exists(args.path):
+        if os.path.isdir(args.path):
+            cand = os.path.join(args.path, "go.mod")
+            if os.path.exists(cand):
+                manifest = cand
+        elif os.path.isfile(args.path) and args.path.endswith("go.mod"):
+            manifest = args.path
+            
+    if not manifest:
+        print(f"{COLOR_RED}{ICON_ERROR} No go.mod found in: {args.path}{COLOR_RESET}")
+        return None, None, 0
+        
+    print(f"{COLOR_GRAY}{ICON_INFO} Reading go.mod...{COLOR_RESET}")
+    dependencies, devDependencies = parse_go_mod(manifest)
+    
+    all_direct = {**dependencies, **devDependencies}
+    targets = []
+    
+    for name, declared_ver in all_direct.items():
+        targets.append({
+            "name": name,
+            "declared": declared_ver,
+            "installed": [declared_ver] if declared_ver else []
+        })
+        
+    if not targets:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
+        return None, None, 0
+        
+    start_time = time.time()
+    results = check_all_go_targets(targets, args.concurrent)
+    
+    # Check vulnerabilities via OSV if requested
+    if getattr(args, "vuls", False):
+        tech_info = TECHNOLOGIES["go"]
+        osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
+        
+        for r in results:
+            key = (r["name"], r["installed"])
+            r["vulnerabilities"] = osv_vulns.get(key, [])
+    else:
+        for r in results:
+            r["vulnerabilities"] = []
+            
+    direct_keys = set(dependencies.keys())
+    for r in results:
+        if r["name"] not in direct_keys:
+            r["required_by"] = ["indirect"]
+        else:
+            r["required_by"] = []
+        
+    elapsed = time.time() - start_time
+    
+    return results, {"dependencies": dependencies, "devDependencies": devDependencies, "all_direct": all_direct}, elapsed
+
+# ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
 
@@ -2225,6 +2471,11 @@ TECHNOLOGIES = {
         "files": ["pom.xml"],
         "osv_ecosystem": "Maven",
         "runner": run_maven_checker
+    },
+    "go": {
+        "files": ["go.mod"],
+        "osv_ecosystem": "Go",
+        "runner": run_go_checker
     }
 }
 
@@ -2378,7 +2629,7 @@ Examples:
     parser.add_argument(
         "--tech", "-t",
         required=True,
-        choices=["npm", "pip", "nuget", "php", "maven"],
+        choices=["npm", "pip", "nuget", "php", "maven", "go"],
         help="The package manager / technology to check."
     )
     parser.add_argument(
