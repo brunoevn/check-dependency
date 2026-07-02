@@ -1,0 +1,42 @@
+{
+  "version": 3,
+  "targets": {
+    "net8.0": {
+      "Newtonsoft.Json/12.0.1": {
+        "type": "package",
+        "dependencies": {
+          "Microsoft.CSharp": "4.3.0"
+        }
+      },
+      "Microsoft.CSharp/4.3.0": {
+        "type": "package"
+      }
+    }
+  },
+  "libraries": {
+    "Newtonsoft.Json/12.0.1": {
+      "type": "package",
+      "path": "newtonsoft.json/12.0.1",
+      "files": []
+    },
+    "Microsoft.CSharp/4.3.0": {
+      "type": "package",
+      "path": "microsoft.csharp/4.3.0",
+      "files": []
+    }
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {},
+    "frameworks": {
+      "net8.0": {
+        "dependencies": {
+          "Newtonsoft.Json": {
+            "target": "Package",
+            "version": "[12.0.1, )"
+          }
+        }
+      }
+    }
+  }
+}

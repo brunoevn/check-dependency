@@ -18,6 +18,7 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from datetime import datetime
+import xml.etree.ElementTree as ET
 
 # ANSI escape codes for styling (HSL/Curated Theme)
 COLOR_RESET = "\033[0m"
@@ -838,6 +839,301 @@ def run_pip_checker(args):
     return results, {"dependencies": dependencies, "devDependencies": {}, "all_direct": dependencies}, elapsed
 
 # ==============================================================================
+# NuGet Checker Logic
+# ==============================================================================
+
+def find_nuget_files(path):
+    """Finds CSPROJ/packages.config and project.assets.json in obj directory."""
+    manifest = None
+    assets_file = None
+    
+    if os.path.exists(path):
+        if os.path.isdir(path):
+            files = os.listdir(path)
+            for f in files:
+                if f.endswith(".csproj") or f == "packages.config":
+                    manifest = os.path.join(path, f)
+                    break
+        elif os.path.isfile(path) and (path.endswith(".csproj") or path.endswith(".config")):
+            manifest = path
+            
+    # Search for project.assets.json under obj/
+    proj_dir = path if os.path.isdir(path) else os.path.dirname(path)
+    obj_dir = os.path.join(proj_dir, "obj")
+    potential_assets = os.path.join(obj_dir, "project.assets.json")
+    if os.path.exists(potential_assets):
+        assets_file = potential_assets
+        
+    return manifest, assets_file
+
+def parse_csproj_or_config(path):
+    """Finds and parses .csproj or packages.config files in a directory."""
+    dependencies = {}
+    
+    config_file = os.path.join(path, "packages.config")
+    if os.path.exists(config_file):
+        try:
+            tree = ET.parse(config_file)
+            root = tree.getroot()
+            for pkg in root.findall("package"):
+                pkg_id = pkg.get("id")
+                version = pkg.get("version")
+                if pkg_id:
+                    dependencies[pkg_id] = version or "*"
+            return dependencies
+        except Exception as e:
+            print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing packages.config: {e}{COLOR_RESET}")
+            
+    try:
+        csproj_files = [f for f in os.listdir(path) if f.endswith(".csproj")]
+        if csproj_files:
+            csproj_path = os.path.join(path, csproj_files[0])
+            tree = ET.parse(csproj_path)
+            root = tree.getroot()
+            
+            for elem in root.iter():
+                tag_local = elem.tag.split("}")[-1]
+                if tag_local == "PackageReference":
+                    pkg_include = elem.get("Include") or elem.get("Update")
+                    version = elem.get("Version")
+                    
+                    if not version:
+                        ver_elem = elem.find("Version")
+                        if ver_elem is not None:
+                            version = ver_elem.text
+                            
+                    if pkg_include:
+                        dependencies[pkg_include] = version or "*"
+                        
+            return dependencies
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing csproj files: {e}{COLOR_RESET}")
+        
+    return {}
+
+def parse_project_assets(filepath):
+    """Parses project.assets.json to extract exact resolved versions and parent relationships."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        resolved = {}
+        parents = {}
+        
+        libraries = data.get("libraries", {})
+        for lib_key, lib_info in libraries.items():
+            if lib_info.get("type") == "package":
+                parts = lib_key.split("/")
+                if len(parts) == 2:
+                    name, version = parts
+                    resolved.setdefault(name, set()).add(version)
+                    
+        targets = data.get("targets", {})
+        for target_name, target_libs in targets.items():
+            for lib_key, lib_info in target_libs.items():
+                parts = lib_key.split("/")
+                if len(parts) != 2:
+                    continue
+                parent_name = parts[0]
+                
+                deps = lib_info.get("dependencies", {})
+                for child_name in deps.keys():
+                    parents.setdefault(child_name, set()).add(parent_name)
+                    
+        project_info = data.get("project", {})
+        frameworks = project_info.get("frameworks", {})
+        for fw_name, fw_info in frameworks.items():
+            deps = fw_info.get("dependencies", {})
+            for child_name in deps.keys():
+                parents.setdefault(child_name, set()).add("root")
+                
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        parents_clean = {k: list(v) for k, v in parents.items()}
+        return resolved_clean, parents_clean
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading project.assets.json: {e}{COLOR_RESET}")
+        return {}, {}
+
+def check_nuget_package(target):
+    """Queries NuGet registry for package metadata and checks target version."""
+    name = target["name"]
+    declared = target["declared"]
+    installed_versions = target["installed"]
+    
+    versions_to_check = installed_versions if installed_versions else [declared]
+    results = []
+    
+    try:
+        encoded_name = urllib.parse.quote(name.lower())
+        url = f"https://api.nuget.org/v3-flatcontainer/{encoded_name}/index.json"
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            
+        versions_list = data.get("versions", [])
+        
+        stable_versions = []
+        for v in versions_list:
+            if "-" not in v:
+                stable_versions.append(v)
+                
+        valid_versions = stable_versions if stable_versions else versions_list
+        
+        def parse_semver_key(v_str):
+            m = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?', v_str)
+            if m:
+                major = int(m.group(1))
+                minor = int(m.group(2))
+                patch = int(m.group(3)) if m.group(3) else 0
+                return (major, minor, patch)
+            return (0, 0, 0)
+            
+        latest_version = None
+        if valid_versions:
+            sorted_versions = sorted(valid_versions, key=parse_semver_key)
+            latest_version = sorted_versions[-1]
+            
+        for ver_str in versions_to_check:
+            clean_ver = re.sub(r'^[^\d]*', '', ver_str) if ver_str else "0.0.0"
+            if not clean_ver:
+                clean_ver = "0.0.0"
+                
+            update_type = "up-to-date"
+            if latest_version and clean_ver != "0.0.0":
+                update_type = classify_update(clean_ver, latest_version)
+                
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": latest_version,
+                "status": update_type,
+                "deprecated": None,
+                "error": None
+            })
+            
+    except urllib.error.HTTPError as e:
+        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": error_msg
+            })
+    except Exception as e:
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": str(e)
+            })
+            
+    return results
+
+def check_all_nuget_targets(targets, max_workers):
+    """Executes NuGet checks concurrently and renders simple progress."""
+    results = []
+    total = len(targets)
+    completed = 0
+    
+    print(f"{COLOR_BOLD}{COLOR_CYAN}Checking {total} packages...{COLOR_RESET}\n")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_target = {executor.submit(check_nuget_package, t): t for t in targets}
+        
+        for future in as_completed(future_to_target):
+            completed += 1
+            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total}] Checking {future_to_target[future]['name']}...{COLOR_RESET}\033[K")
+            sys.stdout.flush()
+            
+            try:
+                res_list = future.result()
+                results.extend(res_list)
+            except Exception as e:
+                target = future_to_target[future]
+                results.append({
+                    "name": target["name"],
+                    "declared": target["declared"],
+                    "installed": target["installed"][0] if target["installed"] else target["declared"],
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": f"Thread error: {e}"
+                })
+                
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+    return results
+
+def run_nuget_checker(args):
+    """Main orchestrator for NuGet checker."""
+    manifest, assets_file = find_nuget_files(args.path)
+    
+    if not manifest and not assets_file:
+        print(f"{COLOR_RED}{ICON_ERROR} No C# project file (.csproj, packages.config) or project.assets.json found in: {args.path}{COLOR_RESET}")
+        return None, None, 0
+        
+    pkg_data = {}
+    if manifest:
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading C# project references...{COLOR_RESET}")
+        pkg_dir = args.path if os.path.isdir(args.path) else os.path.dirname(args.path)
+        pkg_data = parse_csproj_or_config(pkg_dir)
+        
+    lock_data = {}
+    parents_data = {}
+    if assets_file:
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading project.assets.json...{COLOR_RESET}")
+        lock_data, parents_data = parse_project_assets(assets_file)
+        
+    targets = build_check_targets(
+        {"all_direct": pkg_data} if pkg_data else None,
+        lock_data,
+        args.all
+    )
+    
+    if not targets:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
+        return None, None, 0
+        
+    start_time = time.time()
+    results = check_all_nuget_targets(targets, args.concurrent)
+    
+    # Check vulnerabilities via OSV if requested
+    if getattr(args, "vuls", False):
+        tech_info = TECHNOLOGIES["nuget"]
+        osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
+        
+        # Attach vulns back to results
+        for r in results:
+            key = (r["name"], r["installed"])
+            r["vulnerabilities"] = osv_vulns.get(key, [])
+    else:
+        for r in results:
+            r["vulnerabilities"] = []
+            
+    # Resolve transitive dependency parents
+    direct_packages = set(pkg_data.keys()) if pkg_data else set()
+    for r in results:
+        if pkg_data and r["name"] not in direct_packages:
+            direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
+            r["required_by"] = sorted(list(direct_parents))
+        else:
+            r["required_by"] = []
+            
+    elapsed = time.time() - start_time
+    
+    return results, {"dependencies": pkg_data, "devDependencies": {}, "all_direct": pkg_data}, elapsed
+
+# ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
 
@@ -1193,6 +1489,11 @@ TECHNOLOGIES = {
         "files": ["requirements.txt"],
         "osv_ecosystem": "PyPI",
         "runner": run_pip_checker
+    },
+    "nuget": {
+        "files": [".csproj", "packages.config", "project.assets.json"],
+        "osv_ecosystem": "NuGet",
+        "runner": run_nuget_checker
     }
 }
 
@@ -1213,7 +1514,7 @@ Examples:
     parser.add_argument(
         "--tech", "-t",
         required=True,
-        choices=["npm", "pip"],
+        choices=["npm", "pip", "nuget"],
         help="The package manager / technology to check."
     )
     parser.add_argument(
