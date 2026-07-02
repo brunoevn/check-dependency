@@ -1986,8 +1986,19 @@ def check_pipeline_failure(results, fail_config):
         
     return False
 
+def print_banner():
+    banner = f"""{COLOR_BOLD}{COLOR_CYAN}
+  ____   ____    _    
+ / ___| / ___|  / \\   
+ \\___ \\| |     / _ \\  
+  ___) | |___ / ___ \\ 
+ |____/ \\____/_/   \\_\\  {COLOR_GRAY}By Bruno Nielsen{COLOR_RESET}
+"""
+    print(banner)
+
 def main():
     init_colors_and_encoding()
+    print_banner()
     
     parser = argparse.ArgumentParser(
         description="Generic Dependency Checker Utility",
