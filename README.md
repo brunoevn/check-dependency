@@ -1,6 +1,6 @@
 # Generic Dependency Checker (`check_deps.py`)
 
-A powerful, fast, and self-contained command-line utility written in Python to scan project dependencies. It identifies **outdated versions**, **deprecation notices** (yanked packages), and **security vulnerabilities** by querying package registries (npm/PyPI/NuGet/Packagist) and the Google OSV (Open Source Vulnerabilities) database.
+A powerful, fast, and self-contained command-line utility written in Python to scan project dependencies. It identifies **outdated versions**, **deprecation notices** (yanked packages), and **security vulnerabilities** by querying package registries (npm/PyPI/NuGet/Packagist/Maven Central) and the Google OSV (Open Source Vulnerabilities) database.
 
 Designed with a modular and extensible architecture, it supports checking direct and transitive dependencies and requires **zero external python package installations**.
 
@@ -8,7 +8,7 @@ Designed with a modular and extensible architecture, it supports checking direct
 
 ## Key Features
 
-- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), .NET (`nuget`, including C# `.csproj`, VB.NET `.vbproj`, and F# `.fsproj`), and PHP (`php`, including `composer.json` / `composer.lock`) dependencies.
+- **Multi-Ecosystem Support**: Audits Node.js (`npm`), Python (`pip`), .NET (`nuget`, including C# `.csproj`, VB.NET `.vbproj`, and F# `.fsproj`), PHP (`php`, including `composer.json` / `composer.lock`), and Java (`maven`, including `pom.xml`) dependencies.
 - **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments.
 - **Deprecation Warnings**: 
   - For `npm`: Extracts maintainer deprecation notices for exact installed versions.
@@ -60,6 +60,10 @@ Specify the target ecosystem via `--tech` (or `-t`) and the directory via `--pat
   ```powershell
   python check_deps.py --tech php --path ./php_project
   ```
+- **For Java (maven)**:
+  ```powershell
+  python check_deps.py --tech maven --path ./java_project
+  ```
 
 ### 2. Scan Security Vulnerabilities
 Add the `--vuls` (or `-v`) flag to audit packages against Google's OSV database:
@@ -101,8 +105,8 @@ python check_deps.py --tech nuget --path ./dotnet_project --show-all
 
 | Argument | Short | Default | Description |
 | --- | --- | --- | --- |
-| `--tech` | `-t` | *Required* | The package manager / technology to check. Choices: `npm`, `pip`, `nuget`, `php`. |
-| `--path` | `-p` | `.` | Directory containing the package files (e.g. `.csproj`, `composer.json`, `package.json`, or `requirements.txt`). |
+| `--tech` | `-t` | *Required* | The package manager / technology to check. Choices: `npm`, `pip`, `nuget`, `php`, `maven`. |
+| `--path` | `-p` | `.` | Directory containing the package files (e.g. `.csproj`, `composer.json`, `package.json`, `pom.xml`, or `requirements.txt`). |
 | `--vuls` | `-v` | `False` | Enable security vulnerability queries via Google OSV API. |
 | `--all` | `-a` | `False` | Scan all dependencies resolved in lockfile, rather than direct ones. |
 | `--concurrent` | `-c` | `10` | Number of concurrent network request threads to run. |

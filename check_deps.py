@@ -1495,6 +1495,254 @@ def run_composer_checker(args):
     return results, {"dependencies": dependencies, "devDependencies": devDependencies, "all_direct": all_direct}, elapsed
 
 # ==============================================================================
+# Java / Maven Checker Logic
+# ==============================================================================
+
+def parse_maven_pom(filepath):
+    """Parses Maven pom.xml for direct dependencies, interpolating properties."""
+    dependencies = {}
+    try:
+        tree = ET.parse(filepath)
+        root = tree.getroot()
+        
+        ns = ""
+        if "}" in root.tag:
+            ns = root.tag.split("}")[0].lstrip("{")
+        prefix = f"{{{ns}}}" if ns else ""
+        
+        properties = {}
+        props_elem = root.find(f"{prefix}properties")
+        if props_elem is not None:
+            for elem in props_elem:
+                tag_local = elem.tag.split("}")[-1]
+                properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
+                
+        properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
+        properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
+        
+        parent_elem = root.find(f"{prefix}parent")
+        if parent_elem is not None:
+            if not properties["${project.version}"]:
+                properties["${project.version}"] = (parent_elem.findtext(f"{prefix}version") or "").strip()
+            if not properties["${project.groupId}"]:
+                properties["${project.groupId}"] = (parent_elem.findtext(f"{prefix}groupId") or "").strip()
+                
+        for dep in root.iter(f"{prefix}dependency"):
+            g_elem = dep.find(f"{prefix}groupId")
+            a_elem = dep.find(f"{prefix}artifactId")
+            v_elem = dep.find(f"{prefix}version")
+            
+            if g_elem is not None and a_elem is not None:
+                group = g_elem.text.strip() if g_elem.text else ""
+                artifact = a_elem.text.strip() if a_elem.text else ""
+                
+                for prop_name, prop_val in properties.items():
+                    group = group.replace(prop_name, prop_val)
+                    artifact = artifact.replace(prop_name, prop_val)
+                    
+                if group and artifact:
+                    version = (v_elem.text.strip() if v_elem is not None and v_elem.text else "*")
+                    for prop_name, prop_val in properties.items():
+                        version = version.replace(prop_name, prop_val)
+                        
+                    dependencies[f"{group}:{artifact}"] = version
+                    
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing pom.xml: {e}{COLOR_RESET}")
+        
+    return dependencies
+
+def check_maven_package(target):
+    """Queries Maven Central Repository for package metadata."""
+    name = target["name"]
+    declared = target["declared"]
+    installed_versions = target["installed"]
+    
+    versions_to_check = installed_versions if installed_versions else [declared]
+    results = []
+    
+    try:
+        if ":" not in name:
+            raise ValueError(f"Invalid Maven coordinate structure: {name}")
+            
+        group_id, artifact_id = name.split(":", 1)
+        group_path = group_id.replace(".", "/")
+        url = f"https://repo1.maven.org/maven2/{group_path}/{artifact_id}/maven-metadata.xml"
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+            
+        root = ET.fromstring(xml_data)
+        
+        versions_list = []
+        versioning_elem = root.find("versioning")
+        if versioning_elem is not None:
+            versions_elem = versioning_elem.find("versions")
+            if versions_elem is not None:
+                for v in versions_elem.findall("version"):
+                    if v.text:
+                        versions_list.append(v.text.strip())
+                        
+        stable_versions = []
+        for v in versions_list:
+            v_lower = v.lower()
+            if not any(x in v_lower for x in ("-", "alpha", "beta", "rc", "m", "cr", "dev")):
+                stable_versions.append(v)
+                
+        valid_versions = stable_versions if stable_versions else versions_list
+        
+        def parse_semver_key(v_str):
+            m = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?', v_str)
+            if m:
+                major = int(m.group(1))
+                minor = int(m.group(2))
+                patch = int(m.group(3)) if m.group(3) else 0
+                build = int(m.group(4)) if m.group(4) else 0
+                return (major, minor, patch, build)
+            m_digits = re.match(r'^(\d+)$', v_str)
+            if m_digits:
+                return (int(m_digits.group(1)), 0, 0, 0)
+            return (0, 0, 0, 0)
+            
+        latest_version = None
+        if valid_versions:
+            sorted_versions = sorted(valid_versions, key=parse_semver_key)
+            latest_version = sorted_versions[-1]
+            
+        for ver_str in versions_to_check:
+            clean_ver = re.sub(r'^[^\d]*', '', ver_str) if ver_str else "0.0.0"
+            if not clean_ver:
+                clean_ver = "0.0.0"
+                
+            update_type = "up-to-date"
+            if latest_version and clean_ver != "0.0.0":
+                update_type = classify_update(clean_ver, latest_version)
+                
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": latest_version,
+                "status": update_type,
+                "deprecated": None,
+                "error": None
+            })
+            
+    except urllib.error.HTTPError as e:
+        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": error_msg
+            })
+    except Exception as e:
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": str(e)
+            })
+            
+    return results
+
+def check_all_maven_targets(targets, max_workers):
+    """Executes Maven Repository checks concurrently and renders simple progress."""
+    results = []
+    total = len(targets)
+    completed = 0
+    
+    print(f"{COLOR_BOLD}{COLOR_CYAN}Checking {total} packages...{COLOR_RESET}\n")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_target = {executor.submit(check_maven_package, t): t for t in targets}
+        
+        for future in as_completed(future_to_target):
+            completed += 1
+            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total}] Checking {future_to_target[future]['name']}...{COLOR_RESET}\033[K")
+            sys.stdout.flush()
+            
+            try:
+                res_list = future.result()
+                results.extend(res_list)
+            except Exception as e:
+                target = future_to_target[future]
+                results.append({
+                    "name": target["name"],
+                    "declared": target["declared"],
+                    "installed": target["installed"][0] if target["installed"] else target["declared"],
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": f"Thread error: {e}"
+                })
+                
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+    return results
+
+def run_maven_checker(args):
+    """Main orchestrator for Maven dependency checker."""
+    manifest = None
+    if os.path.exists(args.path):
+        if os.path.isdir(args.path):
+            cand = os.path.join(args.path, "pom.xml")
+            if os.path.exists(cand):
+                manifest = cand
+        elif os.path.isfile(args.path) and args.path.endswith("pom.xml"):
+            manifest = args.path
+            
+    if not manifest:
+        print(f"{COLOR_RED}{ICON_ERROR} No pom.xml found in: {args.path}{COLOR_RESET}")
+        return None, None, 0
+        
+    print(f"{COLOR_GRAY}{ICON_INFO} Reading Maven pom.xml...{COLOR_RESET}")
+    pkg_data = parse_maven_pom(manifest)
+    
+    targets = []
+    for name, declared_ver in pkg_data.items():
+        targets.append({
+            "name": name,
+            "declared": declared_ver,
+            "installed": [declared_ver] if declared_ver != "*" else []
+        })
+        
+    if not targets:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
+        return None, None, 0
+        
+    start_time = time.time()
+    results = check_all_maven_targets(targets, args.concurrent)
+    
+    # Check vulnerabilities via OSV if requested
+    if getattr(args, "vuls", False):
+        tech_info = TECHNOLOGIES["maven"]
+        osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
+        
+        for r in results:
+            key = (r["name"], r["installed"])
+            r["vulnerabilities"] = osv_vulns.get(key, [])
+    else:
+        for r in results:
+            r["vulnerabilities"] = []
+            
+    for r in results:
+        r["required_by"] = []
+        
+    elapsed = time.time() - start_time
+    
+    return results, {"dependencies": pkg_data, "devDependencies": {}, "all_direct": pkg_data}, elapsed
+
+# ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
 
@@ -1861,6 +2109,11 @@ TECHNOLOGIES = {
         "files": ["composer.json", "composer.lock"],
         "osv_ecosystem": "Packagist",
         "runner": run_composer_checker
+    },
+    "maven": {
+        "files": ["pom.xml"],
+        "osv_ecosystem": "Maven",
+        "runner": run_maven_checker
     }
 }
 
@@ -2014,7 +2267,7 @@ Examples:
     parser.add_argument(
         "--tech", "-t",
         required=True,
-        choices=["npm", "pip", "nuget", "php"],
+        choices=["npm", "pip", "nuget", "php", "maven"],
         help="The package manager / technology to check."
     )
     parser.add_argument(
