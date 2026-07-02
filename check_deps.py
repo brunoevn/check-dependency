@@ -1216,6 +1216,285 @@ def run_nuget_checker(args):
     return results, {"dependencies": pkg_data, "devDependencies": {}, "all_direct": pkg_data}, elapsed
 
 # ==============================================================================
+# PHP / Composer Checker Logic
+# ==============================================================================
+
+def find_composer_files(path):
+    """Finds composer.json and composer.lock in a directory."""
+    manifest = None
+    lock_file = None
+    
+    if os.path.exists(path):
+        if os.path.isdir(path):
+            candidates = os.listdir(path)
+            if "composer.json" in candidates:
+                manifest = os.path.join(path, "composer.json")
+            if "composer.lock" in candidates:
+                lock_file = os.path.join(path, "composer.lock")
+        elif os.path.isfile(path):
+            if path.endswith("composer.json"):
+                manifest = path
+                lock_dir = os.path.dirname(path)
+                lock_cand = os.path.join(lock_dir, "composer.lock")
+                if os.path.exists(lock_cand):
+                    lock_file = lock_cand
+            elif path.endswith("composer.lock"):
+                lock_file = path
+                json_dir = os.path.dirname(path)
+                json_cand = os.path.join(json_dir, "composer.json")
+                if os.path.exists(json_cand):
+                    manifest = json_cand
+                    
+    return manifest, lock_file
+
+def parse_composer_json(filepath):
+    """Parses composer.json for direct production and development dependencies."""
+    dependencies = {}
+    devDependencies = {}
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        def filter_deps(deps_dict):
+            filtered = {}
+            for name, constraint in deps_dict.items():
+                if "/" in name:
+                    filtered[name] = constraint
+            return filtered
+            
+        req = data.get("require", {})
+        req_dev = data.get("require-dev", {})
+        
+        dependencies = filter_deps(req)
+        devDependencies = filter_deps(req_dev)
+        
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing composer.json: {e}{COLOR_RESET}")
+        
+    return dependencies, devDependencies
+
+def parse_composer_lock(filepath):
+    """Parses composer.lock for resolved package versions and parent relationships."""
+    resolved = {}
+    parents = {}
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        packages = data.get("packages", []) + data.get("packages-dev", [])
+        
+        for pkg in packages:
+            name = pkg.get("name")
+            version = pkg.get("version")
+            if name and version:
+                clean_ver = version.lstrip("v")
+                resolved.setdefault(name, set()).add(clean_ver)
+                
+                reqs = pkg.get("require", {})
+                for child_name in reqs.keys():
+                    if "/" in child_name:
+                        parents.setdefault(child_name, set()).add(name)
+                        
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading composer.lock: {e}{COLOR_RESET}")
+        
+    resolved_clean = {k: list(v) for k, v in resolved.items()}
+    parents_clean = {k: list(v) for k, v in parents.items()}
+    return resolved_clean, parents_clean
+
+def check_composer_package(target):
+    """Queries Packagist registry for composer package metadata."""
+    name = target["name"]
+    declared = target["declared"]
+    installed_versions = target["installed"]
+    
+    versions_to_check = installed_versions if installed_versions else [declared]
+    results = []
+    
+    try:
+        name_lower = name.lower()
+        url = f"https://repo.packagist.org/p2/{name_lower}.json"
+        
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            
+        packages = data.get("packages", {})
+        pkg_data = packages.get(name_lower, [])
+        
+        versions_list = []
+        for item in pkg_data:
+            v_str = item.get("version")
+            if v_str:
+                versions_list.append(v_str.lstrip("v"))
+                
+        stable_versions = []
+        for v in versions_list:
+            v_lower = v.lower()
+            if not any(x in v_lower for x in ("-", "dev", "alpha", "beta", "rc", "patch")):
+                if re.match(r'^\d+\.\d+(?:\.\d+)?(?:\.\d+)?$', v):
+                    stable_versions.append(v)
+                    
+        valid_versions = stable_versions if stable_versions else versions_list
+        
+        def parse_semver_key(v_str):
+            m = re.match(r'^(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?', v_str)
+            if m:
+                major = int(m.group(1))
+                minor = int(m.group(2))
+                patch = int(m.group(3)) if m.group(3) else 0
+                build = int(m.group(4)) if m.group(4) else 0
+                return (major, minor, patch, build)
+            return (0, 0, 0, 0)
+            
+        latest_version = None
+        if valid_versions:
+            sorted_versions = sorted(valid_versions, key=parse_semver_key)
+            latest_version = sorted_versions[-1]
+            
+        for ver_str in versions_to_check:
+            clean_ver = ver_str.lstrip("v") if ver_str else "0.0.0"
+            if not clean_ver or clean_ver == "0.0.0":
+                clean_ver = "0.0.0"
+                
+            update_type = "up-to-date"
+            if latest_version and clean_ver != "0.0.0":
+                update_type = classify_update(clean_ver, latest_version)
+                
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": latest_version,
+                "status": update_type,
+                "deprecated": None,
+                "error": None
+            })
+            
+    except urllib.error.HTTPError as e:
+        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": error_msg
+            })
+    except Exception as e:
+        for ver_str in versions_to_check:
+            results.append({
+                "name": name,
+                "declared": declared,
+                "installed": ver_str,
+                "latest": None,
+                "status": "error",
+                "deprecated": None,
+                "error": str(e)
+            })
+            
+    return results
+
+def check_all_composer_targets(targets, max_workers):
+    """Executes Packagist checks concurrently and renders simple progress."""
+    results = []
+    total = len(targets)
+    completed = 0
+    
+    print(f"{COLOR_BOLD}{COLOR_CYAN}Checking {total} packages...{COLOR_RESET}\n")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_target = {executor.submit(check_composer_package, t): t for t in targets}
+        
+        for future in as_completed(future_to_target):
+            completed += 1
+            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total}] Checking {future_to_target[future]['name']}...{COLOR_RESET}\033[K")
+            sys.stdout.flush()
+            
+            try:
+                res_list = future.result()
+                results.extend(res_list)
+            except Exception as e:
+                target = future_to_target[future]
+                results.append({
+                    "name": target["name"],
+                    "declared": target["declared"],
+                    "installed": target["installed"][0] if target["installed"] else target["declared"],
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": f"Thread error: {e}"
+                })
+                
+    sys.stdout.write("\r\033[K")
+    sys.stdout.flush()
+    return results
+
+def run_composer_checker(args):
+    """Main orchestrator for PHP / Composer checker."""
+    manifest, lock_file = find_composer_files(args.path)
+    
+    if not manifest and not lock_file:
+        print(f"{COLOR_RED}{ICON_ERROR} No composer.json or composer.lock found in: {args.path}{COLOR_RESET}")
+        return None, None, 0
+        
+    dependencies = {}
+    devDependencies = {}
+    if manifest:
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading composer.json dependencies...{COLOR_RESET}")
+        dependencies, devDependencies = parse_composer_json(manifest)
+        
+    lock_data = {}
+    parents_data = {}
+    if lock_file:
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading composer.lock...{COLOR_RESET}")
+        lock_data, parents_data = parse_composer_lock(lock_file)
+        
+    all_direct = {**dependencies, **devDependencies}
+    targets = build_check_targets(
+        {"dependencies": dependencies, "devDependencies": devDependencies, "all_direct": all_direct},
+        lock_data,
+        args.all
+    )
+    
+    if not targets:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
+        return None, None, 0
+        
+    start_time = time.time()
+    results = check_all_composer_targets(targets, args.concurrent)
+    
+    # Check vulnerabilities via OSV if requested
+    if getattr(args, "vuls", False):
+        tech_info = TECHNOLOGIES["php"]
+        osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
+        
+        # Attach vulns back to results
+        for r in results:
+            key = (r["name"], r["installed"])
+            r["vulnerabilities"] = osv_vulns.get(key, [])
+    else:
+        for r in results:
+            r["vulnerabilities"] = []
+            
+    # Resolve transitive dependency parents
+    direct_packages = set(all_direct.keys())
+    for r in results:
+        if r["name"] not in direct_packages:
+            direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
+            r["required_by"] = sorted(list(direct_parents))
+        else:
+            r["required_by"] = []
+            
+    elapsed = time.time() - start_time
+    
+    return results, {"dependencies": dependencies, "devDependencies": devDependencies, "all_direct": all_direct}, elapsed
+
+# ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
 
@@ -1577,6 +1856,11 @@ TECHNOLOGIES = {
         "files": [".csproj", "packages.config", "project.assets.json"],
         "osv_ecosystem": "NuGet",
         "runner": run_nuget_checker
+    },
+    "php": {
+        "files": ["composer.json", "composer.lock"],
+        "osv_ecosystem": "Packagist",
+        "runner": run_composer_checker
     }
 }
 
@@ -1719,7 +2003,7 @@ Examples:
     parser.add_argument(
         "--tech", "-t",
         required=True,
-        choices=["npm", "pip", "nuget"],
+        choices=["npm", "pip", "nuget", "php"],
         help="The package manager / technology to check."
     )
     parser.add_argument(
