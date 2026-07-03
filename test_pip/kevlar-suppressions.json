@@ -1,0 +1,17 @@
+{
+  "suppressions": [
+    {
+      "id": "GHSA-pq67-6m6q-mj2v",
+      "reason": "Redirecciones no deshabilitadas en PoolManager mitigadas en nuestro código."
+    },
+    {
+      "package": "certifi",
+      "reason": "Librería de certifi utilizada únicamente en entorno local/testeo."
+    },
+    {
+      "package": "django",
+      "id": "GHSA-2gwj-7jmv-h26r",
+      "reason": "Inyección SQL mitigada por nuestro uso del ORM nativo seguro."
+    }
+  ]
+}
