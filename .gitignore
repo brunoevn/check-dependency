@@ -1,6 +1,6 @@
 mejoras.md
-test_gradle/
-test_pip/
-test_ruby/
-test_rust/
-test_android/
+
+# Generated reports
+*report*.html
+*report*.json
+*report*.md
