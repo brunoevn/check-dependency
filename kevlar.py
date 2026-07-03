@@ -232,6 +232,121 @@ def format_latest_versions(latest_same_major, latest_absolute):
         return latest_absolute
     return f"{latest_same_major} (latest: {latest_absolute})"
 
+def clean_repo_url(url):
+    """Normalizes repository URLs from different registries into clean web URLs."""
+    if not url:
+        return None
+    if isinstance(url, dict):
+        url = url.get("url") or ""
+    if not isinstance(url, str):
+        return None
+    url = url.strip()
+    if url.startswith("git+"):
+        url = url[4:]
+    if url.startswith("git://"):
+        url = "https://" + url[6:]
+    elif url.startswith("git@"):
+        url = url[4:]
+        url = url.replace(":", "/")
+        url = "https://" + url
+    if url.endswith(".git"):
+        url = url[:-4]
+    url = url.replace("ssh://git@", "https://")
+    url = url.rstrip("/")
+    return url
+
+def get_compare_url(repo_url, installed, latest):
+    """Generates a comparison diff link between installed and latest version."""
+    repo_url = clean_repo_url(repo_url)
+    if not repo_url or not installed or not latest:
+        return None
+    inst_clean = installed.lstrip("v")
+    late_clean = latest.lstrip("v")
+    if "github.com" in repo_url:
+        return f"{repo_url}/compare/v{inst_clean}...v{late_clean}"
+    elif "gitlab.com" in repo_url:
+        return f"{repo_url}/-/compare/v{inst_clean}...v{late_clean}"
+    return f"{repo_url}/compare/{inst_clean}...{late_clean}"
+
+def resolve_npm_repo(name):
+    """Fetches the repository URL for an NPM package from registry (lazy-loaded)."""
+    try:
+        url = f"{URL_NPM_REGISTRY}{urllib.parse.quote(name)}/latest"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        repo = data.get("repository")
+        return clean_repo_url(repo)
+    except Exception:
+        pass
+    return None
+
+def resolve_nuget_repo(name, version):
+    """Parses .nuspec XML to find the repository URL of a NuGet package."""
+    try:
+        name_lower = name.lower()
+        url = f"{URL_NUGET_REGISTRY}{name_lower}/{version}/{name_lower}.nuspec"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as response:
+            xml_data = response.read()
+        root = ET.fromstring(xml_data)
+        repo_url = None
+        proj_url = None
+        for elem in root.iter():
+            tag_local = elem.tag.split('}')[-1]
+            if tag_local == 'repository':
+                val = elem.attrib.get('url')
+                if val:
+                    repo_url = val
+            elif tag_local == 'projectUrl':
+                if elem.text:
+                    proj_url = elem.text.strip()
+        if repo_url:
+            return clean_repo_url(repo_url)
+        if proj_url:
+            return clean_repo_url(proj_url)
+    except Exception:
+        pass
+    return None
+
+def resolve_maven_repo(registry_url, group_path, artifact_id, version):
+    """Parses .pom XML to find the repository or project URL of a Maven/Gradle package."""
+    try:
+        url = f"{registry_url}{group_path}/{artifact_id}/{version}/{artifact_id}-{version}.pom"
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", f"Kevlar-CheckDeps/{VERSION}")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            xml_data = response.read()
+        root = ET.fromstring(xml_data)
+        scm_url = None
+        proj_url = None
+        for elem in root.iter():
+            tag_local = elem.tag.split('}')[-1]
+            if tag_local == 'scm':
+                for child in elem:
+                    child_tag = child.tag.split('}')[-1]
+                    if child_tag == 'url':
+                        scm_url = child.text
+            elif tag_local == 'url':
+                if elem.text:
+                    proj_url = elem.text
+        return clean_repo_url(scm_url or proj_url)
+    except Exception:
+        pass
+    return None
+
+def resolve_go_repo(name):
+    """Translates Go module names to their repository web URLs."""
+    if name.startswith("github.com/"):
+        parts = name.split("/")
+        if len(parts) >= 3:
+            return f"https://{parts[0]}/{parts[1]}/{parts[2]}"
+    elif name.startswith("golang.org/x/"):
+        parts = name.split("/")
+        if len(parts) >= 3:
+            return f"https://github.com/golang/{parts[2]}"
+    return f"https://{name}"
+
 # ==============================================================================
 # NPM Checker Logic
 # ==============================================================================
@@ -418,6 +533,15 @@ def check_npm_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                repo_url = resolve_npm_repo(name)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -428,7 +552,10 @@ def check_npm_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": deprecation_msg,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -901,6 +1028,35 @@ def check_pypi_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                urls = info.get("project_urls") or {}
+                raw_url = None
+                for key in ["Source", "Repository", "Code", "Homepage"]:
+                    for k, v in urls.items():
+                        if key.lower() in k.lower() and v and "github.com" in v:
+                            raw_url = v
+                            break
+                    if raw_url:
+                        break
+                if not raw_url:
+                    hp = info.get("home_page")
+                    if hp and "github.com" in hp:
+                        raw_url = hp
+                if not raw_url:
+                    for v in urls.values():
+                        if v and "github.com" in v:
+                            raw_url = v
+                            break
+                if not raw_url:
+                    raw_url = info.get("home_page") or urls.get("Homepage")
+                repo_url = clean_repo_url(raw_url)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -911,7 +1067,10 @@ def check_pypi_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": yanked_reason,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -1263,6 +1422,15 @@ def check_nuget_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                repo_url = resolve_nuget_repo(name, latest_absolute)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -1273,7 +1441,10 @@ def check_nuget_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": None,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -1543,6 +1714,23 @@ def check_composer_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                raw_url = None
+                for item in pkg_data:
+                    v_str = item.get("version", "").lstrip("v")
+                    if v_str == latest_absolute:
+                        raw_url = item.get("source", {}).get("url") or item.get("homepage")
+                        break
+                if not raw_url and pkg_data:
+                    raw_url = pkg_data[0].get("source", {}).get("url") or pkg_data[0].get("homepage")
+                repo_url = clean_repo_url(raw_url)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -1553,7 +1741,10 @@ def check_composer_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": None,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -1838,6 +2029,7 @@ def check_maven_package(target):
         registries = [URL_GOOGLE_MAVEN, URL_MAVEN_REGISTRY] if use_google_maven else [URL_MAVEN_REGISTRY, URL_GOOGLE_MAVEN]
         
         last_error = None
+        successful_registry = URL_MAVEN_REGISTRY
         for registry_url in registries:
             url = f"{registry_url}{group_path}/{artifact_id}/maven-metadata.xml"
             try:
@@ -1845,6 +2037,7 @@ def check_maven_package(target):
                 req.add_header("User-Agent", f"Kevlar-CheckDeps/{VERSION}")
                 with urllib.request.urlopen(req, timeout=10) as response:
                     xml_data = response.read()
+                successful_registry = registry_url
                 break
             except Exception as e:
                 last_error = e
@@ -1885,6 +2078,15 @@ def check_maven_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                repo_url = resolve_maven_repo(successful_registry, group_path, artifact_id, latest_absolute)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -1895,7 +2097,10 @@ def check_maven_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": None,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -2151,6 +2356,15 @@ def check_go_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 update_type = classify_update(clean_ver, clean_latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if update_type == "major":
+                repo_url = resolve_go_repo(name)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -2161,7 +2375,10 @@ def check_go_package(target):
                 "latest_absolute": latest_absolute,
                 "status": update_type,
                 "deprecated": None,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
             
     except urllib.error.HTTPError as e:
@@ -2474,6 +2691,16 @@ def check_rust_package(target):
                 
             is_deprecated = clean_ver in yanked_versions
             
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if status == "major":
+                raw_url = crate_info.get("repository") or crate_info.get("homepage")
+                repo_url = clean_repo_url(raw_url)
+                if repo_url:
+                    compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -2484,7 +2711,10 @@ def check_rust_package(target):
                 "latest_absolute": latest_absolute,
                 "status": status,
                 "deprecated": is_deprecated,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
     except Exception as e:
         for ver_str in versions_to_check:
@@ -2742,6 +2972,23 @@ def check_ruby_package(target):
             if latest_absolute and clean_ver != "0.0.0":
                 status = classify_update(clean_ver, latest_absolute)
                 
+            repo_url = None
+            compare_url = None
+            releases_url = None
+            if status == "major":
+                try:
+                    url_gem = f"https://rubygems.org/api/v1/gems/{urllib.parse.quote(name)}.json"
+                    req_g = urllib.request.Request(url_gem)
+                    with urllib.request.urlopen(req_g, timeout=5) as response:
+                        data_g = json.loads(response.read().decode("utf-8"))
+                    raw_url = data_g.get("source_code_uri") or data_g.get("homepage_uri")
+                    repo_url = clean_repo_url(raw_url)
+                    if repo_url:
+                        compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
+                        releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                except Exception:
+                    pass
+                    
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
                 "name": name,
@@ -2752,7 +2999,10 @@ def check_ruby_package(target):
                 "latest_absolute": latest_absolute,
                 "status": status,
                 "deprecated": False,
-                "error": None
+                "error": None,
+                "repo_url": repo_url,
+                "compare_url": compare_url,
+                "releases_url": releases_url
             })
     except Exception as e:
         for ver_str in versions_to_check:
@@ -3189,6 +3439,17 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
         for note in notes_to_print:
             print(note)
             
+    # Print Major Update Diffs section
+    major_diffs_to_print = []
+    for r in filtered_results:
+        if r["status"] == "major" and r.get("compare_url"):
+            major_diffs_to_print.append(f"  {COLOR_BOLD}{r['name']}{COLOR_RESET}: {COLOR_CYAN}{r['compare_url']}{COLOR_RESET}")
+            
+    if major_diffs_to_print:
+        print(f"\n{COLOR_BOLD}Major Update Diffs:{COLOR_RESET}")
+        for diff_note in major_diffs_to_print:
+            print(diff_note)
+            
     # Print security vulnerabilities details section
     if vuls_enabled:
         vuls_to_print = []
@@ -3345,6 +3606,18 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
                     note = f"Deprecation Warning: {r['deprecated']}"
                 else:
                     note = ""
+                    
+                changelog_links = []
+                if r.get("compare_url"):
+                    changelog_links.append(f"[Compare Diff]({r['compare_url']})")
+                if r.get("releases_url"):
+                    changelog_links.append(f"[Release Notes]({r['releases_url']})")
+                if changelog_links:
+                    links_str = " | ".join(changelog_links)
+                    if note:
+                        note += f" ({links_str})"
+                    else:
+                        note = links_str
                     
                 if vuls_enabled:
                     vuls_count = len(r.get("vulnerabilities", []))
@@ -3652,6 +3925,24 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 
             error_html = f'<div class="error-section"><strong>Error:</strong> {error}</div>' if error else ''
             
+            changelog_html = ""
+            if status == "major":
+                compare_url = r.get("compare_url")
+                releases_url = r.get("releases_url")
+                buttons = []
+                if compare_url:
+                    buttons.append(f'<a href="{compare_url}" target="_blank" class="changelog-btn">Compare Diff</a>')
+                if releases_url:
+                    buttons.append(f'<a href="{releases_url}" target="_blank" class="changelog-btn">Release Notes</a>')
+                if buttons:
+                    buttons_str = "\n".join(buttons)
+                    changelog_html = f"""
+                    <div class="changelog-section" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 12px;">
+                        <div style="font-size: 12px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">Analysis & Migration Links:</div>
+                        {buttons_str}
+                    </div>
+                    """
+                    
             package_cards_html.append(f"""
             <div class="package-card" 
                  data-name="{name}" 
@@ -3683,6 +3974,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 <div class="card-details" id="detail-{i}">
                     {required_by_html}
                     {error_html}
+                    {changelog_html}
                     {"".join(vuln_details_html)}
                     {"".join(suppressed_details_html)}
                 </div>
@@ -4123,6 +4415,27 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             border-radius: 6px;
             margin-top: 8px;
             color: #94a3b8;
+        }}
+        
+        /* Changelog & Migration buttons */
+        .changelog-btn {{
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--border-color);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+            margin-right: 8px;
+            transition: all 0.2s ease;
+        }}
+        .changelog-btn:hover {{
+            background-color: var(--primary);
+            color: #0b0f19;
+            border-color: var(--primary);
         }}
     </style>
 </head>
