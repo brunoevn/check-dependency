@@ -5024,12 +5024,12 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 <button id="clearSearch" onclick="clearSearchInput()">&times;</button>
             </div>
             <div class="filter-buttons">
-                <button class="filter-btn active" onclick="setCategory('all')">All ({total})</button>
-                <button class="filter-btn" onclick="setCategory('vulnerable')">Vulnerable ({total_vulns})</button>
-                <button class="filter-btn" onclick="setCategory('outdated')">Outdated ({outdated})</button>
-                <button class="filter-btn" onclick="setCategory('deprecated')">Deprecated ({deprecated})</button>
-                <button class="filter-btn" onclick="setCategory('suppressed')">Suppressed ({suppressed_vulns})</button>
-                <button class="filter-btn" onclick="setCategory('clean')">Clean ({up_to_date})</button>
+                <button class="filter-btn active" onclick="setCategory('all')">All</button>
+                <button class="filter-btn" onclick="setCategory('vulnerable')">Vulnerable</button>
+                <button class="filter-btn" onclick="setCategory('outdated')">Outdated</button>
+                <button class="filter-btn" onclick="setCategory('deprecated')">Deprecated</button>
+                <button class="filter-btn" onclick="setCategory('suppressed')">Suppressed</button>
+                <button class="filter-btn" onclick="setCategory('clean')">Clean</button>
             </div>
         </div>
         
