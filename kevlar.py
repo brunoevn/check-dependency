@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -352,12 +352,196 @@ def resolve_go_repo(name):
 # ==============================================================================
 
 def find_npm_files(base_path):
-    """Finds package.json and package-lock.json files in path."""
+    """Finds package.json and lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml) in path."""
     pkg_path = os.path.join(base_path, "package.json")
-    lock_path = os.path.join(base_path, "package-lock.json")
     
-    return (pkg_path if os.path.exists(pkg_path) else None,
-            lock_path if os.path.exists(lock_path) else None)
+    lock_files = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]
+    lock_path = None
+    for lf in lock_files:
+        path = os.path.join(base_path, lf)
+        if os.path.exists(path):
+            lock_path = path
+            break
+            
+    return (pkg_path if os.path.exists(pkg_path) else None, lock_path)
+
+def parse_yarn_lock(filepath):
+    """Parses yarn.lock to extract resolved versions and their parent relations.
+    Returns:
+        tuple: (resolved, parents) where parents is child_name -> list of parent_names
+    """
+    resolved = {}
+    parents = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        current_names = []
+        in_dependencies = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            
+            indent_len = len(line) - len(line.lstrip())
+            
+            if indent_len == 0:
+                in_dependencies = False
+                current_names = []
+                header = stripped.rstrip(":")
+                
+                parts = []
+                current_part = []
+                in_quotes = False
+                for char in header:
+                    if char == '"':
+                        in_quotes = not in_quotes
+                    elif char == ',' and not in_quotes:
+                        parts.append("".join(current_part).strip())
+                        current_part = []
+                    else:
+                        current_part.append(char)
+                if current_part:
+                    parts.append("".join(current_part).strip())
+                
+                for part in parts:
+                    part = part.strip('"')
+                    if "@" in part:
+                        if part.startswith("@"):
+                            name_part = part[1:]
+                            if "@" in name_part:
+                                pkg_name = "@" + name_part.rsplit("@", 1)[0]
+                            else:
+                                pkg_name = part
+                        else:
+                            pkg_name = part.rsplit("@", 1)[0]
+                    else:
+                        pkg_name = part
+                    
+                    if pkg_name.startswith("npm:"):
+                        pkg_name = pkg_name[4:]
+                    current_names.append(pkg_name)
+                    
+            elif indent_len > 0:
+                if stripped.startswith("version ") or stripped.startswith("version:"):
+                    ver_val = stripped.split(" ", 1)[-1] if " " in stripped else stripped.split(":", 1)[-1]
+                    ver_val = ver_val.strip().strip('"').strip(':').strip()
+                    for name in current_names:
+                        resolved.setdefault(name, set()).add(ver_val)
+                elif stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:"):
+                    in_dependencies = True
+                elif in_dependencies and indent_len >= 4:
+                    dep_line = stripped
+                    if ":" in dep_line:
+                        dep_name = dep_line.split(":", 1)[0].strip().strip('"')
+                    else:
+                        dep_name = dep_line.split(" ", 1)[0].strip().strip('"')
+                    if dep_name:
+                        for name in current_names:
+                            parents.setdefault(dep_name, set()).add(name)
+                
+                if indent_len == 2 and not (stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:")):
+                    in_dependencies = False
+                    
+        parents_clean = {k: list(v) for k, v in parents.items()}
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        return resolved_clean, parents_clean
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading yarn.lock: {e}{COLOR_RESET}")
+        return {}, {}
+
+def parse_pnpm_lock(filepath):
+    """Parses pnpm-lock.yaml to extract resolved versions and their parent relations.
+    Returns:
+        tuple: (resolved, parents) where parents is child_name -> list of parent_names
+    """
+    resolved = {}
+    parents = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        in_packages = False
+        current_pkg = None
+        in_pkg_deps = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+                
+            indent = len(line) - len(line.lstrip())
+            
+            if stripped.startswith("packages:"):
+                in_packages = True
+                continue
+                
+            if indent == 0 and in_packages and not stripped.startswith("packages:"):
+                in_packages = False
+                current_pkg = None
+                in_pkg_deps = False
+                
+            if in_packages:
+                if indent == 2 and stripped.endswith(":"):
+                    raw_pkg = stripped.rstrip(":")
+                    if raw_pkg.startswith("/"):
+                        raw_pkg = raw_pkg[1:]
+                    if "/" in raw_pkg and not raw_pkg.startswith("@"):
+                        first_part = raw_pkg.split("/", 1)[0]
+                        if "." in first_part or "localhost" in first_part:
+                            raw_pkg = raw_pkg.split("/", 1)[1]
+                            
+                    pkg_name = None
+                    version = None
+                    
+                    if "@" in raw_pkg:
+                        if raw_pkg.startswith("@"):
+                            parts = raw_pkg[1:].rsplit("@", 1)
+                            if len(parts) == 2:
+                                pkg_name = "@" + parts[0]
+                                version = parts[1]
+                        else:
+                            parts = raw_pkg.rsplit("@", 1)
+                            if len(parts) == 2:
+                                pkg_name = parts[0]
+                                version = parts[1]
+                                
+                    if not pkg_name and "/" in raw_pkg:
+                        parts = raw_pkg.rsplit("/", 1)
+                        if len(parts) == 2:
+                            pkg_name = parts[0]
+                            version = parts[1]
+                            
+                    if not pkg_name:
+                        pkg_name = raw_pkg
+                        version = "unknown"
+                        
+                    if version and "(" in version:
+                        version = version.split("(", 1)[0]
+                        
+                    current_pkg = pkg_name
+                    in_pkg_deps = False
+                    if pkg_name and version:
+                        resolved.setdefault(pkg_name, set()).add(version)
+                        
+                elif indent == 4 and current_pkg:
+                    if stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:"):
+                        in_pkg_deps = True
+                    else:
+                        in_pkg_deps = False
+                elif indent >= 6 and current_pkg and in_pkg_deps:
+                    if ":" in stripped:
+                        dep_name = stripped.split(":", 1)[0].strip().strip('"')
+                        if dep_name:
+                            parents.setdefault(dep_name, set()).add(current_pkg)
+                            
+        parents_clean = {k: list(v) for k, v in parents.items()}
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        return resolved_clean, parents_clean
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading pnpm-lock.yaml: {e}{COLOR_RESET}")
+        return {}, {}
 
 def parse_package_json(filepath):
     """Parses package.json to extract direct dependencies."""
@@ -872,7 +1056,7 @@ def run_npm_checker(args):
     pkg_file, lock_file = find_npm_files(args.path)
     
     if not pkg_file and not lock_file:
-        print(f"{COLOR_RED}{ICON_ERROR} No package.json or package-lock.json found in: {args.path}{COLOR_RESET}")
+        print(f"{COLOR_RED}{ICON_ERROR} No package.json or lockfile found in: {args.path}{COLOR_RESET}")
         return None, None, 0
         
     pkg_data = None
@@ -883,8 +1067,16 @@ def run_npm_checker(args):
     lock_data = {}
     parents_data = {}
     if lock_file:
-        print(f"{COLOR_GRAY}{ICON_INFO} Reading package-lock.json...{COLOR_RESET}")
-        lock_data, parents_data = parse_package_lock(lock_file)
+        basename = os.path.basename(lock_file)
+        if basename == "package-lock.json":
+            print(f"{COLOR_GRAY}{ICON_INFO} Reading package-lock.json...{COLOR_RESET}")
+            lock_data, parents_data = parse_package_lock(lock_file)
+        elif basename == "yarn.lock":
+            print(f"{COLOR_GRAY}{ICON_INFO} Reading yarn.lock...{COLOR_RESET}")
+            lock_data, parents_data = parse_yarn_lock(lock_file)
+        elif basename == "pnpm-lock.yaml":
+            print(f"{COLOR_GRAY}{ICON_INFO} Reading pnpm-lock.yaml...{COLOR_RESET}")
+            lock_data, parents_data = parse_pnpm_lock(lock_file)
         
     targets = build_check_targets(pkg_data, lock_data, args.all)
     
@@ -1134,42 +1326,286 @@ def check_all_pip_targets(targets, max_workers):
     sys.stdout.flush()
     return results
 
+def find_pip_files(base_path):
+    """Finds manifest and lockfile for python/pip technologies."""
+    poetry_lock = os.path.join(base_path, "poetry.lock")
+    pyproject = os.path.join(base_path, "pyproject.toml")
+    if os.path.exists(poetry_lock) and os.path.exists(pyproject):
+        return pyproject, poetry_lock, "poetry"
+        
+    pdm_lock = os.path.join(base_path, "pdm.lock")
+    if os.path.exists(pdm_lock) and os.path.exists(pyproject):
+        return pyproject, pdm_lock, "pdm"
+        
+    pipfile_lock = os.path.join(base_path, "Pipfile.lock")
+    if os.path.exists(pipfile_lock):
+        return None, pipfile_lock, "pipenv"
+        
+    req_file = os.path.join(base_path, "requirements.txt")
+    if os.path.exists(req_file):
+        return req_file, None, "pip"
+        
+    if os.path.exists(pyproject):
+        return pyproject, None, "pyproject"
+        
+    return None, None, None
+
+def parse_poetry_lock(filepath):
+    """Parses poetry.lock to extract resolved versions and their parent relations.
+    Returns:
+        tuple: (resolved, parents) where parents is child_name -> list of parent_names
+    """
+    resolved = {}
+    parents = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+            
+        blocks = content.split("[[package]]")
+        for block in blocks[1:]:
+            lines = block.splitlines()
+            name = None
+            version = None
+            in_deps = False
+            
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("[[") or (stripped.startswith("[") and not stripped.startswith("[package.dependencies]")):
+                    in_deps = False
+                if stripped.startswith("[package.dependencies]"):
+                    in_deps = True
+                    continue
+                    
+                if not in_deps:
+                    if stripped.startswith("name ="):
+                        name = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                    elif stripped.startswith("version ="):
+                        version = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                else:
+                    if "=" in stripped:
+                        dep_name = stripped.split("=", 1)[0].strip().strip('"').strip("'")
+                        if dep_name and name:
+                            parents.setdefault(dep_name, set()).add(name)
+                            
+            if name and version:
+                resolved.setdefault(name, set()).add(version)
+                
+        parents_clean = {k: list(v) for k, v in parents.items()}
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        return resolved_clean, parents_clean
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading poetry.lock: {e}{COLOR_RESET}")
+        return {}, {}
+
+def parse_pdm_lock(filepath):
+    """Parses pdm.lock to extract resolved versions and their parent relations.
+    Returns:
+        tuple: (resolved, parents) where parents is child_name -> list of parent_names
+    """
+    resolved = {}
+    parents = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+            
+        blocks = content.split("[[package]]")
+        for block in blocks[1:]:
+            lines = block.splitlines()
+            name = None
+            version = None
+            in_deps = False
+            
+            for line in lines:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("[[") or (stripped.startswith("[") and not stripped.startswith("dependencies =")):
+                    in_deps = False
+                if stripped.startswith("dependencies = ["):
+                    in_deps = True
+                    continue
+                    
+                if not in_deps:
+                    if stripped.startswith("name ="):
+                        name = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                    elif stripped.startswith("version ="):
+                        version = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                else:
+                    if stripped == "]":
+                        in_deps = False
+                    else:
+                        item = stripped.rstrip(",").strip().strip('"').strip("'")
+                        if item:
+                            match = re.match(r'^([a-zA-Z0-9\-_.]+)', item)
+                            if match and name:
+                                dep_name = match.group(1)
+                                parents.setdefault(dep_name, set()).add(name)
+                                
+            if name and version:
+                resolved.setdefault(name, set()).add(version)
+                
+        parents_clean = {k: list(v) for k, v in parents.items()}
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        return resolved_clean, parents_clean
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading pdm.lock: {e}{COLOR_RESET}")
+        return {}, {}
+
+def parse_pipfile_lock(filepath):
+    """Parses Pipfile.lock to extract resolved versions.
+    Returns:
+        tuple: (resolved, parents)
+    """
+    resolved = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            
+        for section in ["default", "develop"]:
+            deps = data.get(section, {})
+            for name, info in deps.items():
+                if isinstance(info, dict) and "version" in info:
+                    version = info["version"]
+                    if version.startswith("=="):
+                        version = version[2:]
+                    resolved.setdefault(name, set()).add(version)
+                    
+        resolved_clean = {k: list(v) for k, v in resolved.items()}
+        return resolved_clean, {}
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading Pipfile.lock: {e}{COLOR_RESET}")
+        return {}, {}
+
+def parse_pyproject_toml(filepath):
+    """Parses pyproject.toml to extract direct dependencies.
+    Returns:
+        dict: name -> version_specifier
+    """
+    dependencies = {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+        in_poetry_deps = False
+        in_pep621_deps = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+                
+            if stripped.startswith("[tool.poetry.dependencies]"):
+                in_poetry_deps = True
+                in_pep621_deps = False
+                continue
+            elif stripped.startswith("dependencies = ["):
+                in_pep621_deps = True
+                in_poetry_deps = False
+                continue
+            elif stripped.startswith("["):
+                in_poetry_deps = False
+                in_pep621_deps = False
+                
+            if in_poetry_deps:
+                if "=" in stripped:
+                    name = stripped.split("=", 1)[0].strip().strip('"').strip("'")
+                    val = stripped.split("=", 1)[1].strip()
+                    if name != "python":
+                        if val.startswith("{"):
+                            ver_match = re.search(r'version\s*=\s*["\']([^"\']+)["\']', val)
+                            version = ver_match.group(1) if ver_match else "*"
+                        else:
+                            version = val.strip('"').strip("'")
+                        dependencies[name] = version
+            elif in_pep621_deps:
+                if stripped == "]":
+                    in_pep621_deps = False
+                else:
+                    item = stripped.rstrip(",").strip().strip('"').strip("'")
+                    if item:
+                        match = re.match(r'^([a-zA-Z0-9\-_.]+)(.*)$', item)
+                        if match:
+                            name = match.group(1)
+                            spec = match.group(2).strip()
+                            dependencies[name] = spec if spec else "*"
+                            
+        return dependencies
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading pyproject.toml: {e}{COLOR_RESET}")
+        return {}
+
 def run_pip_checker(args):
     """Main orchestrator for pip checker."""
-    req_file = os.path.join(args.path, "requirements.txt")
+    manifest_file, lock_file, tech_type = find_pip_files(args.path)
     
-    if not os.path.exists(req_file):
-        print(f"{COLOR_RED}{ICON_ERROR} No requirements.txt found in: {args.path}{COLOR_RESET}")
+    if not manifest_file and not lock_file:
+        print(f"{COLOR_RED}{ICON_ERROR} No requirements.txt, poetry.lock, Pipfile.lock, or pyproject.toml found in: {args.path}{COLOR_RESET}")
         return None, None, 0
         
-    print(f"{COLOR_GRAY}{ICON_INFO} Reading requirements.txt...{COLOR_RESET}")
-    dependencies, parents_data = parse_requirements_txt(req_file)
+    direct_deps = {}
+    lock_deps = {}
+    parents_data = {}
     
-    if not dependencies:
-        print(f"{COLOR_YELLOW}{ICON_WARN} No packages identified to check.{COLOR_RESET}")
-        return None, None, 0
-        
+    if tech_type == "poetry":
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading pyproject.toml (Poetry)...{COLOR_RESET}")
+        direct_deps = parse_pyproject_toml(manifest_file)
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading poetry.lock...{COLOR_RESET}")
+        lock_deps, parents_data = parse_poetry_lock(lock_file)
+    elif tech_type == "pdm":
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading pyproject.toml (PDM)...{COLOR_RESET}")
+        direct_deps = parse_pyproject_toml(manifest_file)
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading pdm.lock...{COLOR_RESET}")
+        lock_deps, parents_data = parse_pdm_lock(lock_file)
+    elif tech_type == "pipenv":
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading Pipfile.lock...{COLOR_RESET}")
+        lock_deps, parents_data = parse_pipfile_lock(lock_file)
+        direct_deps = {k: "*" for k in lock_deps.keys()}
+    elif tech_type == "pyproject":
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading pyproject.toml...{COLOR_RESET}")
+        direct_deps = parse_pyproject_toml(manifest_file)
+    elif tech_type == "pip":
+        print(f"{COLOR_GRAY}{ICON_INFO} Reading requirements.txt...{COLOR_RESET}")
+        dependencies, parents_data = parse_requirements_txt(manifest_file)
+        direct_deps = dependencies
+        for name, spec in dependencies.items():
+            version = spec[2:] if spec.startswith("==") else ""
+            if version:
+                lock_deps[name] = [version]
+                
     targets = []
-    for name, spec in sorted(dependencies.items()):
-        installed = []
-        if spec.startswith("=="):
-            installed = [spec[2:]]
+    if args.all and lock_deps:
+        for name, versions in lock_deps.items():
+            declared = direct_deps.get(name)
+            targets.append({
+                "name": name,
+                "declared": declared,
+                "installed": versions
+            })
+    else:
+        for name, declared in sorted(direct_deps.items()):
+            versions = lock_deps.get(name, [])
+            if not versions and declared and not any(c in declared for c in [">", "<", "~", "*", "^"]):
+                clean_ver = declared[2:] if declared.startswith("==") else declared
+                versions = [clean_ver]
+            targets.append({
+                "name": name,
+                "declared": declared,
+                "installed": versions
+            })
             
-        targets.append({
-            "name": name,
-            "declared": spec,
-            "installed": installed
-        })
+    if not targets:
+        print(f"{COLOR_YELLOW}{ICON_WARN} No Python packages identified to check.{COLOR_RESET}")
+        return None, None, 0
         
     start_time = time.time()
     results = check_all_pip_targets(targets, args.concurrent)
     
-    # Check vulnerabilities via OSV if requested
     if getattr(args, "vuls", False):
         tech_info = TECHNOLOGIES["pip"]
         osv_vulns = check_osv_vulnerabilities(targets, tech_info["osv_ecosystem"], args.concurrent)
         
-        # Attach vulns back to results
         for r in results:
             key = (r["name"], r["installed"])
             r["vulnerabilities"] = osv_vulns.get(key, [])
@@ -1177,23 +1613,30 @@ def run_pip_checker(args):
         for r in results:
             r["vulnerabilities"] = []
             
-    # Resolve transitive dependency parents
-    all_direct = {}
     for r in results:
         parents_list = parents_data.get(r["name"], [])
         r["required_by"] = sorted(parents_list)
         
+    all_direct = {}
+    for r in results:
+        parents_list = parents_data.get(r["name"], [])
         is_direct = True
-        for p in parents_list:
-            if not p.startswith("-r") and "requirements" not in p:
-                is_direct = False
-                break
+        if parents_list:
+            for p in parents_list:
+                if not p.startswith("-r") and "requirements" not in p:
+                    is_direct = False
+                    break
+        else:
+            is_direct = r["name"] in direct_deps
+            
         if is_direct:
-            all_direct[r["name"]] = dependencies.get(r["name"], "0.0.0")
-        
+            all_direct[r["name"]] = direct_deps.get(r["name"], "0.0.0")
+            
     elapsed = time.time() - start_time
     
-    return results, {"dependencies": dependencies, "devDependencies": {}, "all_direct": all_direct}, elapsed
+    pkg_data_deps = {k: v[0] if isinstance(v, list) and v else v for k, v in lock_deps.items()} if lock_deps else direct_deps
+    
+    return results, {"dependencies": pkg_data_deps, "devDependencies": {}, "all_direct": all_direct}, elapsed
 
 # ==============================================================================
 # NuGet Checker Logic
@@ -4666,12 +5109,12 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
 
 TECHNOLOGIES = {
     "npm": {
-        "files": ["package.json", "package-lock.json"],
+        "files": ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
         "osv_ecosystem": "npm",
         "runner": run_npm_checker
     },
     "pip": {
-        "files": ["requirements.txt"],
+        "files": ["requirements.txt", "poetry.lock", "Pipfile.lock", "pdm.lock", "pyproject.toml"],
         "osv_ecosystem": "PyPI",
         "runner": run_pip_checker
     },
