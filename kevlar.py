@@ -5470,7 +5470,7 @@ def check_for_updates():
                 status = "Update Available"
                 
     if status == "Update Available":
-        print(f"{COLOR_YELLOW}{ICON_WARN} A new version v{latest_version} is available! (Current: v{VERSION}). Run 'git pull' to update.{COLOR_RESET}")
+        print(f"{COLOR_YELLOW}{ICON_WARN} A new version v{latest_version} is available! (Current: v{VERSION}).{COLOR_RESET}")
     elif latest_version not in ("Unknown", "Error"):
         print(f"{COLOR_GREEN}{ICON_OK} Kevlar is up-to-date (v{VERSION}).{COLOR_RESET}")
 
