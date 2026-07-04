@@ -3982,7 +3982,8 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
     """Exports results as a clean Markdown document."""
     try:
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write("# Dependency Status Report\n\n")
+            f.write("# Dependency Status Report\n")
+            f.write("[GitHub Repository](https://github.com/brunoevn/kevlar-checkdeps)\n\n")
             f.write(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
             # Write summary
@@ -4955,6 +4956,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             <div>
                 <h1>Kevlar CheckDeps <span style="font-size: 13px; font-weight: normal; color: var(--text-muted); margin-left: 6px;">v{VERSION}</span></h1>
                 <div style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Dependency Status & Security Audit</div>
+                <div style="font-size: 12px; margin-top: 6px;"><a href="https://github.com/brunoevn/kevlar-checkdeps" target="_blank" style="color: var(--primary); text-decoration: none;">https://github.com/brunoevn/kevlar-checkdeps</a></div>
             </div>
             <div class="meta-info">
                 <div>Report Generated: <strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</strong></div>
@@ -5289,6 +5291,7 @@ def print_banner():
 | ' / |  _|   \\ \\ / / | |     / _ \\ | |_) |
 | . \\ | |___   \\ V /  | |___ / ___ \\|  _ < 
 |_|\\_\\|_____|   \\_/   |_____/_/   \\_\\_| \\_\\  v{VERSION}  {COLOR_GRAY}By Bruno Nielsen{COLOR_RESET}
+  {COLOR_CYAN}https://github.com/brunoevn/kevlar-checkdeps{COLOR_RESET}
 """
     print(banner)
 
