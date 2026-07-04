@@ -182,53 +182,18 @@ def compare_versions(v1_str, v2_str):
         return -1
     return -1 if p1 < p2 else 1
 
-# Node.js EOL Dates (Release Schedule Schedule: end-of-life date for each major)
-NODE_EOL_DATES = {
-    "0.8": "2014-07-31",
-    "0.10": "2016-10-31",
-    "0.12": "2016-12-31",
-    "4": "2018-04-30",
-    "5": "2016-06-30",
-    "6": "2019-04-30",
-    "7": "2017-06-30",
-    "8": "2019-12-31",
-    "9": "2018-06-30",
-    "10": "2021-04-30",
-    "11": "2019-06-01",
-    "12": "2022-04-30",
-    "13": "2020-06-01",
-    "14": "2023-04-30",
-    "15": "2021-06-01",
-    "16": "2023-09-11",
-    "17": "2022-06-01",
-    "18": "2025-04-30",
-    "19": "2023-06-01",
-    "20": "2026-04-30",
-    "21": "2024-06-01",
-    "22": "2027-04-30",
-    "23": "2025-06-01",
-    "24": "2028-04-30",
-    "25": "2026-06-01",
-    "26": "2029-04-30",
-    "27": "2030-04-30"
-}
-
 def fetch_node_schedule():
-    """Fetches the official Node.js release schedule from GitHub with a quick fallback.
+    """Fetches the official Node.js release schedule from GitHub.
     Returns:
         dict: A dictionary mapping major versions to dicts with EOL and maintenance dates.
     """
     url = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
     import urllib.request
     
-    # Initialize with our fallback schedule
     schedule = {}
-    for k, v in NODE_EOL_DATES.items():
-        schedule[k] = {"maintenance": "N/A", "end": v}
-    
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Kevlar Dependency Scanner)"})
-        with urllib.request.urlopen(req, timeout=3) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))
                 for k, v in data.items():
@@ -237,8 +202,8 @@ def fetch_node_schedule():
                         "maintenance": v.get("maintenance", "N/A"),
                         "end": v.get("end", "N/A")
                     }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"{COLOR_YELLOW}{ICON_WARN} Warning fetching Node.js release schedule: {e}{COLOR_RESET}")
         
     return schedule
 
