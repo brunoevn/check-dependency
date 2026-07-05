@@ -40,7 +40,12 @@ Designed with a modular and extensible architecture, it supports checking direct
 - **High Performance Scanning**: Optimizes queries by requesting abbreviated metadata format headers from npm, and checks security advisories in a single `POST /v1/querybatch` request rather than one-by-one.
 - **Visual Console Reporting**: Displays findings in a neat, colorized table with summary statistics.
 - **Terminal Compatibility Fallback**: Automatically detects standard terminal encoding capabilities, switching seamlessly from Unicode characters to clean ASCII frames to prevent encoding crashes on Windows consoles.
-- **JSON & Markdown Exports**: Supports exporting results to formatted Markdown tables or raw JSON datasets for CI/CD pipeline integration.
+- **JSON, Markdown & HTML Exports**: Supports exporting results to formatted Markdown tables, raw JSON datasets, or interactive HTML dashboards.
+- **NPM Registry Checksum Auditing**: For Node.js (`npm`), cross-validates local lockfile integrity hashes against official registry metadata, flagging **Missing Checksums**, **Weak Algorithms** (SHA-1), and critical **Integrity Mismatches**.
+- **Advanced HTML Filtering Controls**: Interactive HTML dashboards include:
+  - **AND Intersection Filtering**: Combine multiple filters (e.g., *Outdated* + *Vulnerable*) to show only packages matching all selected categories.
+  - **Quick "only / all" Hover Controls**: Instantly isolate sub-filters or check all back on hover.
+  - **Auto-closing & Smart Resetting**: Auto-closes menus when clicking outside and resets checkboxes when switching to *All* or *Clean*.
 
 ---
 
