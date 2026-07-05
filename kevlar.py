@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 import xml.etree.ElementTree as ET
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
