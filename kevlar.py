@@ -4,7 +4,7 @@
 Dependency Checker Utility
 Checks project dependencies for outdated, deprecated, or obsolete versions.
 Supports security vulnerability scanning via Google OSV API.
-Supports multiple technologies (currently npm).
+Supports multiple technologies.
 """
 
 import os
