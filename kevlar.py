@@ -17,12 +17,12 @@ import urllib.error
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
-from datetime import datetime
+from datetime import datetime, date
 import xml.etree.ElementTree as ET
 import codecs
 import base64
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -88,7 +88,8 @@ def init_colors_and_encoding():
 
     # 2. Check encoding of stdout to fallback if Unicode is not supported
     encoding = getattr(sys.stdout, "encoding", "") or ""
-    if "utf" not in encoding.lower():
+    encoding_str = str(encoding)
+    if "utf" not in encoding_str.lower():
         global ICON_OK, ICON_INFO, ICON_WARN, ICON_ERROR, ICON_DEPRECATED, BORDER_CHARS, ICON_SHIELD
         ICON_OK = "[OK]"
         ICON_INFO = "[INFO]"
@@ -190,7 +191,6 @@ def fetch_node_schedule():
         dict: A dictionary mapping major versions to dicts with EOL and maintenance dates.
     """
     url = "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json"
-    import urllib.request
     
     schedule = {}
     try:
@@ -316,7 +316,6 @@ def analyze_node_constraint(constraint_str):
     """
     schedule = fetch_node_schedule()
     
-    from datetime import datetime, date
     today = date.today()
     
     # Dynamically build test_majors list from schedule keys
@@ -1553,7 +1552,7 @@ def run_npm_checker(args):
             r["vulnerabilities"] = []
             
     # Check Node.js version if applicable
-    node_constraint, source = find_node_constraint(args.path, pkg_data)
+    node_constraint, _source = find_node_constraint(args.path, pkg_data)
     if node_constraint:
         status, deprecated_msg, error_msg, recommendation = analyze_node_constraint(node_constraint)
             
@@ -2276,7 +2275,7 @@ def parse_project_assets(filepath):
                     resolved.setdefault(name, set()).add(version)
                     
         targets = data.get("targets", {})
-        for target_name, target_libs in targets.items():
+        for _target_name, target_libs in targets.items():
             for lib_key, lib_info in target_libs.items():
                 parts = lib_key.split("/")
                 if len(parts) != 2:
@@ -2289,7 +2288,7 @@ def parse_project_assets(filepath):
                     
         project_info = data.get("project", {})
         frameworks = project_info.get("frameworks", {})
-        for fw_name, fw_info in frameworks.items():
+        for _fw_name, fw_info in frameworks.items():
             deps = fw_info.get("dependencies", {})
             for child_name in deps.keys():
                 parents.setdefault(child_name, set()).add("root")
@@ -2886,7 +2885,7 @@ def parse_maven_pom_recursive(filepath, parent_dep_mgmt=None, seen_files=None):
             rel_path = rel_path_elem.text.strip() if (rel_path_elem is not None and rel_path_elem.text) else "../pom.xml"
             parent_pom_path = os.path.abspath(os.path.join(os.path.dirname(filepath), rel_path))
             if os.path.exists(parent_pom_path):
-                p_deps, p_props, p_dep_mgmt = parse_maven_pom_recursive(parent_pom_path, parent_dep_mgmt, seen_files)
+                _p_deps, p_props, p_dep_mgmt = parse_maven_pom_recursive(parent_pom_path, parent_dep_mgmt, seen_files)
                 properties.update(p_props)
                 dep_mgmt.update(p_dep_mgmt)
                 
@@ -4118,7 +4117,7 @@ def parse_libs_versions_toml(filepath):
             elif in_libraries:
                 if "=" in stripped:
                     parts = stripped.split("=", 1)
-                    alias = parts[0].strip().strip('"').strip("'")
+                    _alias = parts[0].strip().strip('"').strip("'")
                     val = parts[1].strip()
                     
                     # Case 1: Simple string "group:name:version"
@@ -4752,15 +4751,11 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         errors = sum(1 for r in results if r["status"] == "error")
         
         total_vulns = 0
-        vuln_pkg_count = 0
         suppressed_vulns = 0
-        suppressed_pkg_count = 0
         
         if vuls_enabled:
             total_vulns = sum(len(r.get("vulnerabilities", [])) for r in results)
-            vuln_pkg_count = sum(1 for r in results if r.get("vulnerabilities"))
             suppressed_vulns = sum(len(r.get("suppressed_vulnerabilities", [])) for r in results)
-            suppressed_pkg_count = sum(1 for r in results if r.get("suppressed_vulnerabilities"))
             
         # Count severities for SVG Chart
         critical = 0
