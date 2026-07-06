@@ -582,6 +582,28 @@ def clean_repo_url(url):
     url = url.rstrip("/")
     return url
 
+def is_github_url(url):
+    """Safely checks if the URL hostname is github.com or a subdomain of it."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname or ""
+        return hostname == "github.com" or hostname.endswith(".github.com")
+    except Exception:
+        return False
+
+def is_gitlab_url(url):
+    """Safely checks if the URL hostname is gitlab.com or a subdomain of it."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+        hostname = parsed.hostname or ""
+        return hostname == "gitlab.com" or hostname.endswith(".gitlab.com")
+    except Exception:
+        return False
+
 def get_compare_url(repo_url, installed, latest):
     """Generates a comparison diff link between installed and latest version."""
     repo_url = clean_repo_url(repo_url)
@@ -589,9 +611,9 @@ def get_compare_url(repo_url, installed, latest):
         return None
     inst_clean = installed.lstrip("v")
     late_clean = latest.lstrip("v")
-    if "github.com" in repo_url:
+    if is_github_url(repo_url):
         return f"{repo_url}/compare/v{inst_clean}...v{late_clean}"
-    elif "gitlab.com" in repo_url:
+    elif is_gitlab_url(repo_url):
         return f"{repo_url}/-/compare/v{inst_clean}...v{late_clean}"
     return f"{repo_url}/compare/{inst_clean}...{late_clean}"
 
@@ -1117,7 +1139,7 @@ def check_npm_package(target):
                 repo_url = resolve_npm_repo(name)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -1681,18 +1703,18 @@ def check_pypi_package(target):
                 raw_url = None
                 for key in ["Source", "Repository", "Code", "Homepage"]:
                     for k, v in urls.items():
-                        if key.lower() in k.lower() and v and "github.com" in v:
+                        if key.lower() in k.lower() and v and is_github_url(clean_repo_url(v)):
                             raw_url = v
                             break
                     if raw_url:
                         break
                 if not raw_url:
                     hp = info.get("home_page")
-                    if hp and "github.com" in hp:
+                    if hp and is_github_url(clean_repo_url(hp)):
                         raw_url = hp
                 if not raw_url:
                     for v in urls.values():
-                        if v and "github.com" in v:
+                        if v and is_github_url(clean_repo_url(v)):
                             raw_url = v
                             break
                 if not raw_url:
@@ -1700,7 +1722,7 @@ def check_pypi_package(target):
                 repo_url = clean_repo_url(raw_url)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -2325,7 +2347,7 @@ def check_nuget_package(target):
                 repo_url = resolve_nuget_repo(name, latest_absolute)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -2625,7 +2647,7 @@ def check_composer_package(target):
                 repo_url = clean_repo_url(raw_url)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -3007,7 +3029,7 @@ def check_maven_package(target):
                 repo_url = resolve_maven_repo(successful_registry, group_path, artifact_id, latest_absolute)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -3285,7 +3307,7 @@ def check_go_package(target):
                 repo_url = resolve_go_repo(name)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -3621,7 +3643,7 @@ def check_rust_package(target):
                 repo_url = clean_repo_url(raw_url)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                    releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                    releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                     
             display_latest = format_latest_versions(latest_same_major, latest_absolute)
             results.append({
@@ -3907,7 +3929,7 @@ def check_ruby_package(target):
                     repo_url = clean_repo_url(raw_url)
                     if repo_url:
                         compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
-                        releases_url = f"{repo_url}/releases" if "github.com" in repo_url else repo_url
+                        releases_url = f"{repo_url}/releases" if is_github_url(repo_url) else repo_url
                 except Exception:
                     pass
                     
