@@ -64,7 +64,12 @@ python kevlar.py --help
 ## How to Use
 
 ### 1. Basic Scan (Direct dependencies only)
-Specify the target ecosystem via `--tech` (or `-t`) and the directory via `--path` (or `-p`):
+Kevlar automatically detects the technology footprint of your project if you omit the `--tech` option (or explicitly specify `auto`). You can also target a specific ecosystem via `--tech` (or `-t`) along with the directory via `--path` (or `-p`):
+
+- **Automatic Technology Footprint Scan**:
+  ```powershell
+  python kevlar.py --path ./my_project
+  ```
 - **For Node.js (npm)**:
   ```powershell
   python kevlar.py --tech npm --path ./nodejs_project
@@ -137,7 +142,21 @@ Add the `--all` (or `-a`) flag to scan the entire tree resolved in lockfiles/ass
 *(For pip, if your `requirements.txt` contains transitive comments from `pip-compile`, the script will automatically parse and display parent tracing details).*
 *(For Java / Maven, if you point the path to a parent POM, the script will automatically discover and aggregate all sub-modules recursively).*
 
-### 4. Export Report Files
+### 4. Recursive Scan of Multiple Projects (`--scan-all`)
+To scan a directory recursively for multiple projects, automatically detect their technologies, and audit each of them:
+- **Scan all projects recursively**:
+  Add the `--scan-all` flag. When using `--scan-all`, you must also specify the report format using `--format` (choices: `html`, `json`, `both`).
+  ```powershell
+  python kevlar.py --scan-all --format both --path ./my_workspace
+  ```
+  This will scan `./my_workspace`, audit all detected projects in real-time, print progress to the console, and automatically write separate, isolated report files named after their directory path (e.g. `report-my_api.html`, `report-frontend_app.json`).
+- **Filter recursive search by technology**:
+  You can filter the search to scan only projects of a specific technology (e.g. `pip`) by combining `--scan-all` with `--tech`:
+  ```powershell
+  python kevlar.py --scan-all --tech pip --format html --path ./my_workspace
+  ```
+
+### 5. Export Report Files
 Output findings into structured Markdown (`.md`), raw JSON (`.json`), or interactive HTML dashboard (`.html`) files using `--output` (or `-o`):
 - **For Markdown**:
   ```powershell
@@ -148,13 +167,13 @@ Output findings into structured Markdown (`.md`), raw JSON (`.json`), or interac
   python kevlar.py --tech nuget --path ./dotnet_project --vuls --output dependency_report.html
   ```
 
-### 5. Show Up-to-Date Packages
+### 6. Show Up-to-Date Packages
 By default, the tool only shows packages that have issues (outdated, deprecated, vulnerable, or errored). Use `--show-all` to list all packages:
 ```powershell
 python kevlar.py --tech nuget --path ./dotnet_project --show-all
 ```
 
-### 6. Check for Updates
+### 7. Check for Updates
 Check if a newer version of Kevlar is available on GitHub:
 ```powershell
 python kevlar.py --update
@@ -166,14 +185,18 @@ python kevlar.py --update
 
 | Argument | Short | Default | Description |
 | --- | --- | --- | --- |
-| `--tech` | `-t` | *Required* | The package manager / technology to check. Choices: `npm`, `pip`, `nuget`, `php`, `maven`, `go`, `rust`, `ruby`, `gradle`, `android`. |
+| `--tech` | `-t` | `"auto"` | The package manager / technology to check. Choices: `npm`, `pip`, `nuget`, `php`, `maven`, `go`, `rust`, `ruby`, `gradle`, `android`, `auto`. When omitted, it automatically detects the technology at the target `--path`. |
 | `--path` | `-p` | `.` | Directory containing the package files (e.g. `.csproj`, `composer.json`, `package.json`, `pom.xml`, `go.mod`, `requirements.txt`, `Cargo.toml`, `Gemfile`, `build.gradle`, `libs.versions.toml`, etc.). |
 | `--vuls` | `-v` | `False` | Enable security vulnerability queries via Google OSV API. |
 | `--all` | `-a` | `False` | Scan all dependencies resolved in lockfile, rather than direct ones. |
 | `--concurrent` | `-c` | `10` | Number of concurrent network request threads to run. |
-| `--output` | `-o` | `None` | Path to export report file (detects `.json`, `.md`, and `.html` formats). |
+| `--output` | `-o` | `None` | Path to export report file (detects `.json`, `.md`, and `.html` formats). Not allowed when using `--scan-all`. |
 | `--show-all` | | `False` | Display all dependencies, even those up-to-date and secure. |
+| `--scan-all` | | `False` | Recursively scan the path for multiple projects, automatically detecting their technologies. |
+| `--format` | | `None` | Output report format when using `--scan-all`. Choices: `html`, `json`, `both`. |
 | `--fail-on-vulns` | | `None` | Break the build (exit code 1) on security issues. Accepts threshold limits (e.g., `"critical:2,high:4"`). |
+| `--fail-on-deprecated` | | `None` | Break the build (exit code 1) if deprecated packages are found. Optionally specify count threshold (e.g., `3`). |
+| `--fail-on-outdated` | | `None` | Break the build (exit code 1) if outdated packages are found. Optionally specify count threshold (e.g., `3`) or specific status levels (e.g., `major:2,minor:4`). |
 | `--suppress` | `-s` | `None` | Path to a JSON file containing vulnerability suppressions (default: look for `kevlar-suppressions.json` in the active path). |
 | `--update` | | `False` | Check for updates from GitHub. |
 ---
@@ -202,6 +225,32 @@ For security auditing, you can use the `--fail-on-vulns` flag to automatically e
      ```
 
 Valid severity identifiers: `critical`, `high`, `medium`, `low`, `unknown`. (CVSS vector strings are parsed dynamically to extract their scores and map to these levels: Critical $\ge 9.0$, High $\ge 7.0$, Medium $\ge 4.0$, Low $\ge 0.1$).
+
+3. **Fail on Deprecated Dependencies**:
+   - Fails if there is **at least one** deprecated package:
+     ```powershell
+     python kevlar.py --path ./project --fail-on-deprecated
+     ```
+   - Fails if there are **at least 3** deprecated packages:
+     ```powershell
+     python kevlar.py --path ./project --fail-on-deprecated 3
+     ```
+
+4. **Fail on Outdated Dependencies**:
+   - Fails if there is **at least one** outdated package (major, minor, or patch):
+     ```powershell
+     python kevlar.py --path ./project --fail-on-outdated
+     ```
+   - Fails if there are **at least 5** outdated packages:
+     ```powershell
+     python kevlar.py --path ./project --fail-on-outdated 5
+     ```
+   - Fails based on granular **update status types** (OR logic). Break if there are **at least 1 major OR 3 minor** updates:
+     ```powershell
+     python kevlar.py --path ./project --fail-on-outdated "major:1,minor:3"
+     ```
+
+Valid status level identifiers: `major`, `minor`, `patch`.
 
 ### Pipeline Examples
 
