@@ -684,14 +684,13 @@ def resolve_maven_repo(registry_url, group_path, artifact_id, version):
 
 def resolve_go_repo(name):
     """Translates Go module names to their repository web URLs."""
-    if name.startswith("github.com/"):
-        parts = name.split("/")
-        if len(parts) >= 3:
-            return f"https://{parts[0]}/{parts[1]}/{parts[2]}"
-    elif name.startswith("golang.org/x/"):
-        parts = name.split("/")
-        if len(parts) >= 3:
-            return f"https://github.com/golang/{parts[2]}"
+    if not name or not isinstance(name, str):
+        return ""
+    parts = name.split("/")
+    if len(parts) >= 3 and parts[0] == "github.com":
+        return f"https://github.com/{parts[1]}/{parts[2]}"
+    elif len(parts) >= 3 and parts[0] == "golang.org" and parts[1] == "x":
+        return f"https://github.com/golang/{parts[2]}"
     return f"https://{name}"
 
 # ==============================================================================
