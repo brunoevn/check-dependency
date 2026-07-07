@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 import codecs
 import base64
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
