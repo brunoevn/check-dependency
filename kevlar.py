@@ -4738,6 +4738,310 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
     except Exception as e:
         print(f"{COLOR_RED}{ICON_ERROR} Failed to export Markdown report: {e}{COLOR_RESET}")
 
+def escape_html(text):
+    """Safely escape HTML characters."""
+    if not isinstance(text, str):
+        return ""
+    return (text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#x27;"))
+
+def get_upgraded_constraint(declared_ver, latest_ver):
+    """Synthesize upgraded constraint preserving prefixes like ^, ~, ==, >=."""
+    if not declared_ver or not latest_ver:
+        return latest_ver
+    
+    # Extract prefix, e.g., ^, ~, >=, ==, ~>
+    match = re.match(r'^([~^>=<!\s]+)\s*(.*)$', declared_ver.strip())
+    if match:
+        prefix = match.group(1)
+        return prefix + latest_ver
+    
+    return latest_ver
+
+def match_line_for_dependency(line, package_name, tech):
+    """Checks if a manifest file line matches the given package dependency declaration."""
+    line_lower = line.lower()
+    pkg_lower = package_name.lower()
+    
+    if tech == "npm" or tech == "php":
+        pattern = r'"' + re.escape(pkg_lower) + r'"\s*:'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "pip":
+        pattern_req = r'^\s*' + re.escape(pkg_lower) + r'\s*(==|>=|<=|~=|!=|>|<|@|;|$)'
+        pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+        pattern_setup = r'[\'"]' + re.escape(pkg_lower) + r'([>=<!~]+|[\'"]\s*,)'
+        
+        return (re.search(pattern_req, line_lower) is not None or 
+                re.search(pattern_toml, line_lower) is not None or
+                re.search(pattern_setup, line_lower) is not None)
+                
+    elif tech == "nuget":
+        pattern = r'(include|update)\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "maven":
+        parts = pkg_lower.split(":")
+        artifact = parts[-1]
+        pattern = r'<artifactId>\s*' + re.escape(artifact) + r'\s*</artifactId>'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "go":
+        pattern = re.escape(pkg_lower) + r'\s+v\d+'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "rust":
+        pattern = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "ruby":
+        pattern = r'gem\s+[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+        return re.search(pattern, line_lower) is not None
+        
+    elif tech == "gradle":
+        parts = pkg_lower.split(":")
+        if len(parts) > 1:
+            group, name_part = parts[0], parts[1]
+            pattern_build = re.escape(group) + r':' + re.escape(name_part)
+            return re.search(pattern_build, line_lower) is not None
+        else:
+            pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+            pattern_name = r'name\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+            return (re.search(pattern_toml, line_lower) is not None or 
+                    re.search(pattern_name, line_lower) is not None)
+                    
+    return False
+
+def find_manifest_files(project_path, technology):
+    """Finds manifest files for the given technology in the project path."""
+    manifest_files = []
+    if os.path.isfile(project_path):
+        return [project_path]
+        
+    if not os.path.exists(project_path):
+        return []
+        
+    tech_patterns = {
+        "npm": ["package.json"],
+        "pip": ["requirements.txt", "pyproject.toml", "Pipfile", "setup.py"],
+        "nuget": [".csproj", ".vbproj", ".fsproj", "Directory.Packages.props"],
+        "php": ["composer.json"],
+        "maven": ["pom.xml"],
+        "go": ["go.mod"],
+        "rust": ["Cargo.toml"],
+        "ruby": ["Gemfile"],
+        "gradle": ["build.gradle", "build.gradle.kts", "libs.versions.toml"],
+    }
+    
+    patterns = tech_patterns.get(technology, [])
+    if not patterns:
+        return []
+        
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "bin", "obj", ".gradle", "venv", ".venv")]
+        for file in files:
+            for pattern in patterns:
+                if pattern.startswith('.'):
+                    if file.lower().endswith(pattern):
+                        manifest_files.append(os.path.join(root, file))
+                else:
+                    if file == pattern:
+                        manifest_files.append(os.path.join(root, file))
+    return manifest_files
+
+def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ver, tech):
+    """Generates remediation diff showing current vs suggested change."""
+    try:
+        with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+    except Exception:
+        return None
+        
+    idx = line_index - 1
+    if idx < 0 or idx >= len(lines):
+        return None
+        
+    line_idx_to_change = None
+    target_text = None
+    
+    search_range = range(idx, min(idx + 4, len(lines)))
+    
+    if declared_ver:
+        for i in search_range:
+            if declared_ver in lines[i]:
+                line_idx_to_change = i
+                target_text = declared_ver
+                break
+                
+    if line_idx_to_change is None and declared_ver:
+        ver_digits = re.search(r'\d+\.\d+(?:\.\d+)?(?:\.\d+)?', declared_ver)
+        if ver_digits:
+            ver_clean = ver_digits.group(0)
+            for i in search_range:
+                if ver_clean in lines[i]:
+                    line_idx_to_change = i
+                    target_text = ver_clean
+                    break
+                    
+    if line_idx_to_change is None:
+        line_idx_to_change = idx
+        ver_pattern = re.search(r'\d+\.\d+(?:\.\d+)?(?:\.\d+)?', lines[idx])
+        if ver_pattern:
+            target_text = ver_pattern.group(0)
+        else:
+            quotes_match = re.search(r'["\']([^"\']+)["\']', lines[idx])
+            if quotes_match:
+                quoted_vals = re.findall(r'["\']([^"\']+)["\']', lines[idx])
+                if quoted_vals:
+                    target_text = quoted_vals[-1]
+                    
+    if line_idx_to_change is None:
+        return None
+        
+    match_prefix = ""
+    match_version = target_text or ""
+    if target_text:
+        match_opt = re.match(r'^([~^>=<!\s]+)\s*(.*)$', target_text.strip())
+        if match_opt:
+            match_prefix = match_opt.group(1)
+            match_version = match_opt.group(2)
+            
+    start_ctx = max(0, line_idx_to_change - 2)
+    end_ctx = min(len(lines), line_idx_to_change + 3)
+    
+    current_block = []
+    suggested_block = []
+    
+    for i in range(start_ctx, end_ctx):
+        orig_line = lines[i].rstrip('\r\n')
+        line_num = i + 1
+        
+        if i == line_idx_to_change:
+            escaped_orig = escape_html(orig_line)
+            if target_text and target_text in orig_line:
+                escaped_target = escape_html(target_text)
+                escaped_prefix = escape_html(match_prefix)
+                escaped_version = escape_html(match_version)
+                
+                html_orig = escaped_orig.replace(
+                    escaped_target, 
+                    f'{escaped_prefix}<span class="diff-remove-chunk">{escaped_version}</span>'
+                )
+                new_line = orig_line.replace(target_text, match_prefix + latest_ver)
+            else:
+                html_orig = escaped_orig
+                new_line = orig_line + f" -> {latest_ver}"
+                
+            escaped_new = escape_html(new_line)
+            escaped_upgraded = escape_html(match_prefix + latest_ver)
+            escaped_prefix = escape_html(match_prefix)
+            escaped_latest = escape_html(latest_ver)
+            
+            if (match_prefix + latest_ver) in new_line:
+                html_new = escaped_new.replace(
+                    escaped_upgraded, 
+                    f'{escaped_prefix}<span class="diff-add-chunk">{escaped_latest}</span>'
+                )
+            else:
+                html_new = escaped_new
+                
+            current_block.append({
+                "line_num": line_num,
+                "html": html_orig,
+                "is_changed": True
+            })
+            suggested_block.append({
+                "line_num": line_num,
+                "html": html_new,
+                "is_changed": True
+            })
+        else:
+            escaped_orig = escape_html(orig_line)
+            current_block.append({
+                "line_num": line_num,
+                "html": escaped_orig,
+                "is_changed": False
+            })
+            suggested_block.append({
+                "line_num": line_num,
+                "html": escaped_orig,
+                "is_changed": False
+            })
+            
+    return {
+        "manifest_path": manifest_path,
+        "line_number": line_idx_to_change + 1,
+        "current_code": current_block,
+        "suggested_code": suggested_block
+    }
+
+def populate_remediation_recommendations(results, default_project_path):
+    """Calculates and attaches remediation info to each result if possible."""
+    for r in results:
+        r["remediation"] = None
+        
+        is_outdated = r.get("status") in ("major", "minor", "patch")
+        has_vulns = bool(r.get("vulnerabilities"))
+        is_depr = bool(r.get("deprecated"))
+        
+        if not (is_outdated or has_vulns or is_depr):
+            continue
+            
+        latest_ver = r.get("latest_absolute") or r.get("latest")
+        if not latest_ver:
+            continue
+            
+        project_path = r.get("project_path") or default_project_path
+        tech = r.get("technology")
+        if not tech:
+            continue
+            
+        name = r.get("name")
+        declared = r.get("declared")
+        
+        # 1. Handle Special Case for node engine
+        if name == "node":
+            package_json_path = os.path.join(project_path, "package.json")
+            if os.path.exists(package_json_path):
+                try:
+                    with open(package_json_path, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()
+                    for idx, line in enumerate(lines):
+                        if '"node"' in line or '"engines"' in line:
+                            diff = generate_remediation_diff(package_json_path, idx + 1, declared, latest_ver, tech)
+                            if diff:
+                                r["remediation"] = diff
+                                break
+                except Exception:
+                    pass
+            continue
+            
+        # 2. General dependency matching
+        manifest_files = find_manifest_files(project_path, tech)
+        if not manifest_files:
+            continue
+            
+        found = False
+        for manifest_path in manifest_files:
+            try:
+                with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+            except Exception:
+                continue
+                
+            for idx, line in enumerate(lines):
+                if match_line_for_dependency(line, name, tech):
+                    diff = generate_remediation_diff(manifest_path, idx + 1, declared, latest_ver, tech)
+                    if diff:
+                        r["remediation"] = diff
+                        found = True
+                        break
+            if found:
+                break
+
 def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     """Exports results as a rich, interactive HTML dashboard report."""
     try:
@@ -5042,6 +5346,46 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 </div>
                 """
             
+            remediation_button_html = ""
+            if r.get("remediation"):
+                manifest_abs_path = r["remediation"]["manifest_path"]
+                base_dir = os.path.dirname(os.path.abspath(filepath)) if filepath else os.getcwd()
+                if not base_dir:
+                    base_dir = os.getcwd()
+                
+                try:
+                    manifest_rel_path = os.path.relpath(manifest_abs_path, base_dir)
+                except Exception:
+                    manifest_rel_path = manifest_abs_path
+                
+                if manifest_rel_path.startswith("..\\..") or manifest_rel_path.startswith("../.."):
+                    proj_p = r.get("project_path")
+                    if proj_p:
+                        try:
+                            manifest_rel_path = os.path.relpath(manifest_abs_path, proj_p)
+                            manifest_rel_path = os.path.join(os.path.basename(os.path.abspath(proj_p)), manifest_rel_path)
+                        except Exception:
+                            pass
+                
+                manifest_rel_path = manifest_rel_path.replace("\\", "/")
+                r["remediation"]["display_path"] = manifest_rel_path
+                
+                serialized_remediation = json.dumps(r["remediation"])
+                escaped_remediation = escape_html(serialized_remediation)
+                
+                remediation_button_html = f"""
+                <div class="remediation-section" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 12px;">
+                    <div style="font-size: 12px; font-weight: 700; color: var(--success); margin-bottom: 8px;">Remediation:</div>
+                    <button class="btn-remediation" data-remediation="{escaped_remediation}" onclick="openRemediationModal(this); event.stopPropagation();">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;">
+                            <path d="M12 20h9"></path>
+                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                        </svg>
+                        Show suggested change
+                    </button>
+                </div>
+                """
+            
             changelog_html = ""
             if status == "major":
                 compare_url = r.get("compare_url")
@@ -5094,6 +5438,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                     {required_by_html}
                     {notes_warnings_html}
                     {changelog_html}
+                    {remediation_button_html}
                     {"".join(vuln_details_html)}
                     {"".join(suppressed_details_html)}
                 </div>
@@ -5745,6 +6090,212 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             color: #0b0f19;
             border-color: var(--primary);
         }}
+
+        /* Modal backdrop */
+        .modal-backdrop {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+            transition: opacity 0.3s ease;
+        }}
+        
+        /* Modal box */
+        .remediation-modal {{
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            width: 90%;
+            max-width: 950px;
+            max-height: 85vh;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            z-index: 1001;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            opacity: 0;
+        }}
+        
+        .remediation-modal.active, .modal-backdrop.active {{
+            display: block;
+            opacity: 1;
+        }}
+        
+        .remediation-modal.active {{
+            transform: translate(-50%, -50%) scale(1);
+            display: flex;
+            flex-direction: column;
+        }}
+        
+        .modal-header {{
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #161e2e;
+        }}
+        
+        .modal-header h3 {{
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }}
+        
+        .modal-close {{
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+        }}
+        
+        .modal-close:hover {{
+            color: var(--text-main);
+        }}
+        
+        .modal-body {{
+            padding: 24px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }}
+        
+        .modal-info-bar {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background-color: #1e293b;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 20px;
+            color: #e2e8f0;
+        }}
+        
+        .modal-diff-container {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }}
+        
+        @media (max-width: 768px) {{
+            .modal-diff-container {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+        
+        .diff-box {{
+            background-color: #0b0f19;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }}
+        
+        .diff-box-title {{
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background-color: #111827;
+        }}
+        
+        .diff-box-title.current {{
+            color: var(--error);
+            border-left: 3px solid var(--error);
+        }}
+        
+        .diff-box-title.suggested {{
+            color: var(--success);
+            border-left: 3px solid var(--success);
+        }}
+        
+        .diff-code {{
+            padding: 16px;
+            margin: 0;
+            font-family: 'Consolas', 'Courier New', Courier, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre;
+        }}
+        
+        .diff-line {{
+            display: flex;
+            width: 100%;
+        }}
+        
+        .diff-line-num {{
+            width: 45px;
+            text-align: right;
+            padding-right: 12px;
+            color: var(--text-muted);
+            user-select: none;
+            border-right: 1px solid var(--border-color);
+            margin-right: 12px;
+            font-size: 11px;
+        }}
+        
+        .diff-line-content {{
+            flex-grow: 1;
+        }}
+        
+        .diff-line.removed {{
+            background-color: rgba(239, 68, 68, 0.15);
+        }}
+        
+        .diff-line.added {{
+            background-color: rgba(16, 185, 129, 0.15);
+        }}
+        
+        .diff-remove-chunk {{
+            background-color: rgba(239, 68, 68, 0.4);
+            text-decoration: line-through;
+            padding: 1px 3px;
+            border-radius: 3px;
+        }}
+        
+        .diff-add-chunk {{
+            background-color: rgba(16, 185, 129, 0.4);
+            padding: 1px 3px;
+            border-radius: 3px;
+        }}
+        
+        .btn-remediation {{
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 8px 16px;
+            font-size: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.1s ease, filter 0.2s ease;
+            margin-top: 10px;
+        }}
+        
+        .btn-remediation:hover {{
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }}
     </style>
 </head>
 <body>
@@ -6143,7 +6694,114 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 chevronEl.style.transform = 'rotate(0deg)';
             }}
         }}
+
+        function escapeHtml(text) {{
+            if (typeof text !== 'string') return '';
+            return text.replace(/&/g, '&amp;')
+                       .replace(/</g, '&lt;')
+                       .replace(/>/g, '&gt;')
+                       .replace(/"/g, '&quot;')
+                       .replace(/'/g, '&#039;');
+        }}
+        
+        function openRemediationModal(btn) {{
+            const dataStr = btn.getAttribute('data-remediation');
+            if (!dataStr) return;
+            
+            const info = JSON.parse(dataStr);
+            
+            document.getElementById('modal-filepath').textContent = info.display_path || (info.manifest_path + ':' + info.line_number);
+            
+            const currentContainer = document.getElementById('modal-current-code');
+            currentContainer.innerHTML = '';
+            info.current_code.forEach(line => {{
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'diff-line' + (line.is_changed ? ' removed' : '');
+                
+                const numSpan = document.createElement('span');
+                numSpan.className = 'diff-line-num';
+                numSpan.textContent = line.line_num;
+                
+                const contentSpan = document.createElement('span');
+                contentSpan.className = 'diff-line-content';
+                contentSpan.innerHTML = line.html;
+                
+                lineDiv.appendChild(numSpan);
+                lineDiv.appendChild(contentSpan);
+                currentContainer.appendChild(lineDiv);
+            }});
+            
+            const suggestedContainer = document.getElementById('modal-suggested-code');
+            suggestedContainer.innerHTML = '';
+            info.suggested_code.forEach(line => {{
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'diff-line' + (line.is_changed ? ' added' : '');
+                
+                const numSpan = document.createElement('span');
+                numSpan.className = 'diff-line-num';
+                numSpan.textContent = line.line_num;
+                
+                const contentSpan = document.createElement('span');
+                contentSpan.className = 'diff-line-content';
+                contentSpan.innerHTML = line.html;
+                
+                lineDiv.appendChild(numSpan);
+                lineDiv.appendChild(contentSpan);
+                suggestedContainer.appendChild(lineDiv);
+            }});
+            
+            document.getElementById('remediation-modal').style.display = 'flex';
+            document.getElementById('modal-backdrop').style.display = 'block';
+            
+            setTimeout(() => {{
+                document.getElementById('remediation-modal').classList.add('active');
+                document.getElementById('modal-backdrop').classList.add('active');
+            }}, 10);
+        }}
+        
+        function closeRemediationModal() {{
+            const modal = document.getElementById('remediation-modal');
+            const backdrop = document.getElementById('modal-backdrop');
+            
+            modal.classList.remove('active');
+            backdrop.classList.remove('active');
+            
+            setTimeout(() => {{
+                modal.style.display = 'none';
+                backdrop.style.display = 'none';
+            }}, 300);
+        }}
     </script>
+    
+    <!-- Remediation Modal -->
+    <div id="modal-backdrop" class="modal-backdrop" onclick="closeRemediationModal()"></div>
+    <div id="remediation-modal" class="remediation-modal">
+        <div class="modal-header">
+            <h3>Remediation Recommendation</h3>
+            <button class="modal-close" onclick="closeRemediationModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Declaration Location</div>
+            <div class="modal-info-bar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary); flex-shrink: 0; margin-right: 4px;">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span id="modal-filepath"></span>
+            </div>
+            
+            <div class="modal-diff-container">
+                <div class="diff-box">
+                    <div class="diff-box-title current">Current Code</div>
+                    <pre class="diff-code" id="modal-current-code"></pre>
+                </div>
+                <div class="diff-box">
+                    <div class="diff-box-title suggested">Suggested Change</div>
+                    <pre class="diff-code" id="modal-suggested-code"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
 """
@@ -6680,6 +7338,12 @@ Examples:
                     if not results:
                         continue
                         
+                    for r in results:
+                        r["project_path"] = project_path
+                        r["technology"] = tech
+                        
+                    populate_remediation_recommendations(results, project_path)
+                    
                     apply_vulnerability_suppressions(results, args.suppress)
                     results = sorted(results, key=lambda x: x["name"].lower())
                     
@@ -6707,10 +7371,6 @@ Examples:
                         proj_json_filepath = f"report-{safe_proj_dirname}.json"
                         export_json_report(results, proj_json_filepath)
                     
-                    for r in results:
-                        r["project_path"] = project_path
-                        r["technology"] = tech
-                        
                     combined_results.extend(results)
                     total_elapsed += elapsed
                     
@@ -6788,6 +7448,10 @@ Examples:
                 if not results_tech:
                     continue
                     
+                for r in results_tech:
+                    r["project_path"] = args.path
+                    r["technology"] = tech
+                    
                 combined_results.extend(results_tech)
                 total_elapsed += elapsed_tech
                 
@@ -6817,6 +7481,14 @@ Examples:
     
     if not results:
         sys.exit(0)
+        
+    for r in results:
+        if "project_path" not in r:
+            r["project_path"] = args.path
+        if "technology" not in r:
+            r["technology"] = args.tech if args.tech != "auto" else r.get("technology")
+            
+    populate_remediation_recommendations(results, args.path)
         
     apply_vulnerability_suppressions(results, args.suppress)
     results = sorted(results, key=lambda x: x["name"].lower())
