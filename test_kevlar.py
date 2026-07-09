@@ -103,5 +103,82 @@ class TestKevlar(unittest.TestCase):
             if os.path.exists(temp_file):
                 os.remove(temp_file)
 
+    def test_security_is_safe_path(self):
+        # Convert path formatting dynamically depending on operating system (ensure proper separators)
+        base_dir = os.path.abspath("C:/workspace/myproject")
+        
+        # Safe paths under base_dir
+        self.assertTrue(kevlar._is_safe_path(base_dir, "C:/workspace/myproject"))
+        self.assertTrue(kevlar._is_safe_path(base_dir, "C:/workspace/myproject/pom.xml"))
+        self.assertTrue(kevlar._is_safe_path(base_dir, "C:/workspace/myproject/src/main/resources"))
+        
+        # Unsafe paths / Traversal outside base_dir
+        self.assertFalse(kevlar._is_safe_path(base_dir, "C:/workspace/myproject/../otherproject/pom.xml"))
+        self.assertFalse(kevlar._is_safe_path(base_dir, "C:/workspace/otherproject"))
+        
+        # Partial match avoidance (e.g. /workspace/myproject-other should not be safe under /workspace/myproject)
+        self.assertFalse(kevlar._is_safe_path(base_dir, "C:/workspace/myproject-other"))
+
+    def test_security_xml_pre_validation(self):
+        # Safe XMLs
+        safe_xml_1 = "<project><dependencies></dependencies></project>"
+        safe_xml_2 = "<?xml version='1.0'?><root>Hello World</root>"
+        # Should not raise exception
+        kevlar._validate_xml_raw_content(safe_xml_1)
+        kevlar._validate_xml_raw_content(safe_xml_2)
+        
+        # Dangerous XMLs with DOCTYPE / ENTITY
+        unsafe_xml_1 = """<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]>
+        <root>&xxe;</root>"""
+        unsafe_xml_2 = """<!ENTITY xxe SYSTEM "http://malicious.com">"""
+        unsafe_xml_3 = """<!doctype foo>"""
+        # Spaced out / Case-insensitive variants
+        unsafe_xml_4 = """<!   doCType foo>"""
+        unsafe_xml_5 = """<!   EnTiTy foo SYSTEM "bar">"""
+        
+        with self.assertRaises(ValueError):
+            kevlar._validate_xml_raw_content(unsafe_xml_1)
+        with self.assertRaises(ValueError):
+            kevlar._validate_xml_raw_content(unsafe_xml_2)
+        with self.assertRaises(ValueError):
+            kevlar._validate_xml_raw_content(unsafe_xml_3)
+        with self.assertRaises(ValueError):
+            kevlar._validate_xml_raw_content(unsafe_xml_4)
+        with self.assertRaises(ValueError):
+            kevlar._validate_xml_raw_content(unsafe_xml_5)
+
+    def test_security_sanitize_error_message(self):
+        import urllib.error
+        import json
+        import xml.etree.ElementTree as ET
+        
+        # HTTP Error 404
+        http_404 = urllib.error.HTTPError("http://example.com", 404, "Not Found", {}, None)
+        self.assertEqual(kevlar._sanitize_error_message(http_404, "pkg"), "Registry returned not found (404)")
+        
+        # HTTP Error 504
+        http_504 = urllib.error.HTTPError("http://example.com", 504, "Gateway Timeout", {}, None)
+        self.assertEqual(kevlar._sanitize_error_message(http_504, "pkg"), "Registry communication timeout")
+        
+        # URL Error timeout
+        url_err_timeout = urllib.error.URLError("timed out")
+        self.assertEqual(kevlar._sanitize_error_message(url_err_timeout, "pkg"), "Registry communication timeout")
+        
+        # JSON format error
+        json_err = json.JSONDecodeError("Expecting value", "{}", 0)
+        self.assertEqual(kevlar._sanitize_error_message(json_err, "pkg"), "Malformed registry response format")
+        
+        # XML parse error
+        xml_err = ET.ParseError("unclosed token")
+        self.assertEqual(kevlar._sanitize_error_message(xml_err, "pkg"), "Malformed manifest format")
+        
+        # Custom ValueError
+        val_err = ValueError("XML parsing rejected: entity detected")
+        self.assertEqual(kevlar._sanitize_error_message(val_err, "pkg"), "Malformed manifest format")
+        
+        # Generic Exception
+        generic_err = Exception("Internal database connection string leaked: postgres://user:pwd@host:5432/db")
+        self.assertEqual(kevlar._sanitize_error_message(generic_err, "pkg"), "Unexpected execution error during analysis")
+
 if __name__ == "__main__":
     unittest.main()

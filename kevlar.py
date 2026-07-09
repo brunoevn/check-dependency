@@ -122,6 +122,105 @@ def init_colors_and_encoding():
             "vertical": "|"
         }
 
+
+DEBUG_MODE = False
+
+def _is_safe_path(base_dir, target_path):
+    """
+    Verifies that target_path resolves within the base_dir directory to prevent Path Traversal.
+    """
+    if not base_dir or not target_path:
+        return False
+    abs_base = os.path.abspath(base_dir)
+    abs_target = os.path.abspath(target_path)
+    if abs_target == abs_base:
+        return True
+    base_prefix = abs_base if abs_base.endswith(os.path.sep) else abs_base + os.path.sep
+    return abs_target.startswith(base_prefix)
+
+def _validate_xml_raw_content(content):
+    """
+    Checks the raw XML string or bytes content for DOCTYPE or ENTITY tags to block XXE / Billion Laughs.
+    """
+    if not content:
+        return
+    if isinstance(content, bytes):
+        try:
+            text = content.decode('utf-8', errors='replace')
+        except Exception:
+            text = content.decode('latin-1', errors='replace')
+    else:
+        text = content
+        
+    pattern = re.compile(r'<\s*!\s*(?:d\s*o\s*c\s*t\s*y\s*p\s*e|e\s*n\s*t\s*i\s*t\s*y)\b', re.IGNORECASE)
+    if pattern.search(text):
+        raise ValueError("XML parsing rejected: XML contains forbidden DOCTYPE/ENTITY declarations.")
+
+def safe_et_parse(source):
+    """
+    Safely parses an XML file path using ET, validating it first.
+    Returns an ElementTree-like object.
+    """
+    with open(source, 'rb') as f:
+        content = f.read()
+    _validate_xml_raw_content(content)
+    root = ET.fromstring(content)
+    return ET.ElementTree(root)
+
+def safe_et_fromstring(text):
+    """
+    Safely parses an XML string or bytes using ET, validating it first.
+    Returns the root Element.
+    """
+    _validate_xml_raw_content(text)
+    return ET.fromstring(text)
+
+def _sanitize_error_message(exc, target_name):
+    """
+    Translates an internal exception into a business-safe, standardized error message
+    without exposing system-level details, internal URLs, paths, or tracebacks.
+    """
+    import urllib.error
+    import json
+    
+    msg = str(exc)
+    
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 404:
+            return "Registry returned not found (404)"
+        elif exc.code in (408, 504):
+            return "Registry communication timeout"
+        elif exc.code >= 500:
+            return "Internal server error on registry side"
+        else:
+            return f"Registry returned unexpected HTTP status {exc.code}"
+            
+    if isinstance(exc, urllib.error.URLError):
+        reason_str = str(exc.reason).lower()
+        if "timeout" in reason_str or "timed out" in reason_str:
+            return "Registry communication timeout"
+        elif "ssl" in reason_str or "cert" in reason_str:
+            return "Registry SSL handshake failed"
+        else:
+            return "Registry connection failed or address unresolved"
+            
+    if isinstance(exc, json.JSONDecodeError):
+        return "Malformed registry response format"
+        
+    if isinstance(exc, ET.ParseError):
+        return "Malformed manifest format"
+        
+    if isinstance(exc, ValueError):
+        if "XML parsing rejected" in msg or "DOCTYPE" in msg or "ENTITY" in msg:
+            return "Malformed manifest format"
+        return "Invalid configuration or manifest parameters"
+        
+    exc_type_lower = type(exc).__name__.lower()
+    if "timeout" in exc_type_lower or "timedout" in exc_type_lower:
+        return "Registry communication timeout"
+        
+    return "Unexpected execution error during analysis"
+
 def safe_urlopen(req, timeout=10, max_retries=3, backoff=0.5):
     """Safely opens a URL with retries, exponential backoff, and default headers."""
     if isinstance(req, str):
@@ -427,7 +526,15 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
             except Exception as e:
                 target_pkg = futures[future]
                 name = target_pkg.get("name", "unknown")
-                print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {e}{COLOR_RESET}")
+                sanitized_msg = _sanitize_error_message(e, name)
+                
+                if DEBUG_MODE:
+                    import traceback
+                    print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {e}{COLOR_RESET}")
+                    traceback.print_exc(file=sys.stdout)
+                else:
+                    print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {sanitized_msg}{COLOR_RESET}")
+                    
                 installed = target_pkg.get("installed", [])
                 versions_to_check = installed if installed else [target_pkg.get("declared")]
                 for ver_str in versions_to_check:
@@ -438,7 +545,7 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
                         "latest": "unknown",
                         "status": "error",
                         "deprecated": False,
-                        "error": str(e)
+                        "error": sanitized_msg
                     })
             
     sys.stdout.write("\r\033[K")
@@ -789,7 +896,7 @@ def resolve_nuget_repo(name, version):
         req = urllib.request.Request(url)
         with safe_urlopen(req, timeout=5) as response:
             xml_data = response.read()
-        root = ET.fromstring(xml_data)
+        root = safe_et_fromstring(xml_data)
         repo_url = None
         proj_url = None
         for elem in root.iter():
@@ -817,7 +924,7 @@ def resolve_maven_repo(registry_url, group_path, artifact_id, version):
         req.add_header("User-Agent", f"Kevlar-CheckDeps/{VERSION}")
         with safe_urlopen(req, timeout=5) as response:
             xml_data = response.read()
-        root = ET.fromstring(xml_data)
+        root = safe_et_fromstring(xml_data)
         scm_url = None
         proj_url = None
         for elem in root.iter():
@@ -2255,7 +2362,7 @@ def find_and_parse_cpm_versions(start_path):
         cpm_file = os.path.join(current, "Directory.Packages.props")
         if os.path.exists(cpm_file):
             try:
-                tree = ET.parse(cpm_file)
+                tree = safe_et_parse(cpm_file)
                 root = tree.getroot()
                 cpm_versions = {}
                 for elem in root.iter():
@@ -2347,7 +2454,7 @@ def parse_csproj_or_config(path, cpm_versions=None):
     config_file = os.path.join(path, "packages.config")
     if os.path.exists(config_file):
         try:
-            tree = ET.parse(config_file)
+            tree = safe_et_parse(config_file)
             root = tree.getroot()
             for pkg in root.findall("package"):
                 pkg_id = pkg.get("id")
@@ -2362,7 +2469,7 @@ def parse_csproj_or_config(path, cpm_versions=None):
         proj_files = [f for f in os.listdir(path) if f.endswith((".csproj", ".vbproj", ".fsproj"))]
         if proj_files:
             csproj_path = os.path.join(path, proj_files[0])
-            tree = ET.parse(csproj_path)
+            tree = safe_et_parse(csproj_path)
             root = tree.getroot()
             
             for elem in root.iter():
@@ -2881,29 +2988,38 @@ def parse_maven_dependency_management(root, prefix, properties):
                         dep_mgmt[f"{group}:{artifact}"] = version
     return dep_mgmt
 
-def find_all_maven_poms(root_pom_path):
+def find_all_maven_poms(root_pom_path, base_dir=None):
     """Recursively finds all module pom.xml files declared in a parent pom.xml."""
-    poms = [os.path.abspath(root_pom_path)]
-    root_dir = os.path.dirname(os.path.abspath(root_pom_path))
-    
+    abs_root_pom = os.path.abspath(root_pom_path)
+    root_dir = os.path.dirname(abs_root_pom)
+    if base_dir is None:
+        base_dir = root_dir
+        
+    poms = []
+    if _is_safe_path(base_dir, abs_root_pom):
+        poms.append(abs_root_pom)
+    else:
+        return poms
+        
     try:
-        tree = ET.parse(root_pom_path)
-        root = tree.getroot()
-        
-        ns = ""
-        if "}" in root.tag:
-            ns = root.tag.split("}")[0].lstrip("{")
-        prefix = f"{{{ns}}}" if ns else ""
-        
-        modules_elem = root.find(f"{prefix}modules")
-        if modules_elem is not None:
-            for mod in modules_elem.findall(f"{prefix}module"):
-                if mod.text:
-                    module_name = mod.text.strip()
-                    module_path = module_name.replace("\\", "/")
-                    module_pom = os.path.join(root_dir, module_path, "pom.xml")
-                    if os.path.exists(module_pom):
-                        poms.extend(find_all_maven_poms(module_pom))
+        if _is_safe_path(base_dir, abs_root_pom) and os.path.exists(abs_root_pom):
+            tree = safe_et_parse(abs_root_pom)
+            root = tree.getroot()
+            
+            ns = ""
+            if "}" in root.tag:
+                ns = root.tag.split("}")[0].lstrip("{")
+            prefix = f"{{{ns}}}" if ns else ""
+            
+            modules_elem = root.find(f"{prefix}modules")
+            if modules_elem is not None:
+                for mod in modules_elem.findall(f"{prefix}module"):
+                    if mod.text:
+                        module_name = mod.text.strip()
+                        module_path = module_name.replace("\\", "/")
+                        module_pom = os.path.abspath(os.path.join(root_dir, module_path, "pom.xml"))
+                        if _is_safe_path(base_dir, module_pom) and os.path.exists(module_pom):
+                            poms.extend(find_all_maven_poms(module_pom, base_dir=base_dir))
     except Exception:
         pass
         
@@ -2916,12 +3032,18 @@ def find_all_maven_poms(root_pom_path):
             
     return unique_poms
 
-def parse_maven_pom_recursive(filepath, parent_dep_mgmt=None, seen_files=None):
+def parse_maven_pom_recursive(filepath, parent_dep_mgmt=None, seen_files=None, base_dir=None):
     """Parses Maven pom.xml recursively, resolving parent project properties and dependencyManagement."""
     if seen_files is None:
         seen_files = set()
         
     abs_path = os.path.abspath(filepath)
+    if base_dir is None:
+        base_dir = os.path.dirname(abs_path)
+        
+    if not _is_safe_path(base_dir, abs_path):
+        return {}, {}, {}
+        
     if abs_path in seen_files:
         return {}, {}, {}
         
@@ -2935,81 +3057,82 @@ def parse_maven_pom_recursive(filepath, parent_dep_mgmt=None, seen_files=None):
         dep_mgmt.update(parent_dep_mgmt)
         
     try:
-        tree = ET.parse(filepath)
-        root = tree.getroot()
-        
-        ns = ""
-        if "}" in root.tag:
-            ns = root.tag.split("}")[0].lstrip("{")
-        prefix = f"{{{ns}}}" if ns else ""
-        
-        # 1. Resolve parent POM first if declared
-        parent_elem = root.find(f"{prefix}parent")
-        if parent_elem is not None:
-            rel_path_elem = parent_elem.find(f"{prefix}relativePath")
-            rel_path = rel_path_elem.text.strip() if (rel_path_elem is not None and rel_path_elem.text) else "../pom.xml"
-            parent_pom_path = os.path.abspath(os.path.join(os.path.dirname(filepath), rel_path))
-            if os.path.exists(parent_pom_path):
-                _p_deps, p_props, p_dep_mgmt = parse_maven_pom_recursive(parent_pom_path, parent_dep_mgmt, seen_files)
-                properties.update(p_props)
-                dep_mgmt.update(p_dep_mgmt)
-                
-        # 2. Parse local properties
-        props_elem = root.find(f"{prefix}properties")
-        if props_elem is not None:
-            for elem in props_elem:
-                tag_local = elem.tag.split("}")[-1]
-                properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
-                
-        properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
-        properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
-        
-        if parent_elem is not None:
-            if not properties["${project.version}"]:
-                properties["${project.version}"] = (parent_elem.findtext(f"{prefix}version") or "").strip()
-            if not properties["${project.groupId}"]:
-                properties["${project.groupId}"] = (parent_elem.findtext(f"{prefix}groupId") or "").strip()
-                
-        # 3. Parse local dependencyManagement
-        local_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
-        dep_mgmt.update(local_dep_mgmt)
-        
-        # 4. Parse active dependencies
-        deps_elem = root.find(f"{prefix}dependencies")
-        if deps_elem is not None:
-            for dep in deps_elem.findall(f"{prefix}dependency"):
-                g_elem = dep.find(f"{prefix}groupId")
-                a_elem = dep.find(f"{prefix}artifactId")
-                v_elem = dep.find(f"{prefix}version")
-                
-                if g_elem is not None and a_elem is not None:
-                    group = g_elem.text.strip() if g_elem.text else ""
-                    artifact = a_elem.text.strip() if a_elem.text else ""
+        if _is_safe_path(base_dir, abs_path) and os.path.exists(abs_path):
+            tree = safe_et_parse(abs_path)
+            root = tree.getroot()
+            
+            ns = ""
+            if "}" in root.tag:
+                ns = root.tag.split("}")[0].lstrip("{")
+            prefix = f"{{{ns}}}" if ns else ""
+            
+            # 1. Resolve parent POM first if declared
+            parent_elem = root.find(f"{prefix}parent")
+            if parent_elem is not None:
+                rel_path_elem = parent_elem.find(f"{prefix}relativePath")
+                rel_path = rel_path_elem.text.strip() if (rel_path_elem is not None and rel_path_elem.text) else "../pom.xml"
+                parent_pom_path = os.path.abspath(os.path.join(os.path.dirname(abs_path), rel_path))
+                if _is_safe_path(base_dir, parent_pom_path) and os.path.exists(parent_pom_path):
+                    _p_deps, p_props, p_dep_mgmt = parse_maven_pom_recursive(parent_pom_path, parent_dep_mgmt, seen_files, base_dir=base_dir)
+                    properties.update(p_props)
+                    dep_mgmt.update(p_dep_mgmt)
                     
-                    for prop_name, prop_val in properties.items():
-                        group = group.replace(prop_name, prop_val)
-                        artifact = artifact.replace(prop_name, prop_val)
+            # 2. Parse local properties
+            props_elem = root.find(f"{prefix}properties")
+            if props_elem is not None:
+                for elem in props_elem:
+                    tag_local = elem.tag.split("}")[-1]
+                    properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
+                    
+            properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
+            properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
+            
+            if parent_elem is not None:
+                if not properties["${project.version}"]:
+                    properties["${project.version}"] = (parent_elem.findtext(f"{prefix}version") or "").strip()
+                if not properties["${project.groupId}"]:
+                    properties["${project.groupId}"] = (parent_elem.findtext(f"{prefix}groupId") or "").strip()
+                    
+            # 3. Parse local dependencyManagement
+            local_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
+            dep_mgmt.update(local_dep_mgmt)
+            
+            # 4. Parse active dependencies
+            deps_elem = root.find(f"{prefix}dependencies")
+            if deps_elem is not None:
+                for dep in deps_elem.findall(f"{prefix}dependency"):
+                    g_elem = dep.find(f"{prefix}groupId")
+                    a_elem = dep.find(f"{prefix}artifactId")
+                    v_elem = dep.find(f"{prefix}version")
+                    
+                    if g_elem is not None and a_elem is not None:
+                        group = g_elem.text.strip() if g_elem.text else ""
+                        artifact = a_elem.text.strip() if a_elem.text else ""
                         
-                    if group and artifact:
-                        coord = f"{group}:{artifact}"
-                        version = "*"
-                        if v_elem is not None and v_elem.text:
-                            version = v_elem.text.strip()
-                            for prop_name, prop_val in properties.items():
-                                version = version.replace(prop_name, prop_val)
-                        elif coord in dep_mgmt:
-                            version = dep_mgmt[coord]
+                        for prop_name, prop_val in properties.items():
+                            group = group.replace(prop_name, prop_val)
+                            artifact = artifact.replace(prop_name, prop_val)
                             
-                        dependencies[coord] = version
-                        
+                        if group and artifact:
+                            coord = f"{group}:{artifact}"
+                            version = "*"
+                            if v_elem is not None and v_elem.text:
+                                version = v_elem.text.strip()
+                                for prop_name, prop_val in properties.items():
+                                    version = version.replace(prop_name, prop_val)
+                            elif coord in dep_mgmt:
+                                version = dep_mgmt[coord]
+                                
+                            dependencies[coord] = version
+                            
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing pom.xml: {e}{COLOR_RESET}")
         
     return dependencies, properties, dep_mgmt
 
-def parse_maven_pom(filepath, parent_dep_mgmt=None):
+def parse_maven_pom(filepath, parent_dep_mgmt=None, base_dir=None):
     """Parses Maven pom.xml for direct dependencies, resolving parent properties and dependencyManagement."""
-    deps, _, _ = parse_maven_pom_recursive(filepath, parent_dep_mgmt)
+    deps, _, _ = parse_maven_pom_recursive(filepath, parent_dep_mgmt, base_dir=base_dir)
     return deps
 
 def check_maven_package(target):
@@ -3054,7 +3177,7 @@ def check_maven_package(target):
         if xml_data is None:
             raise ValueError(f"Failed to fetch metadata from Maven or Google registries: {last_error or 'Not found'}")
             
-        root = ET.fromstring(xml_data)
+        root = safe_et_fromstring(xml_data)
         
         versions_list = []
         versioning_elem = root.find("versioning")
@@ -3169,8 +3292,9 @@ def run_maven_checker(args):
         print(f"{COLOR_RED}{ICON_ERROR} No pom.xml found in: {args.path}{COLOR_RESET}")
         return None, None, 0
         
+    manifest_dir = os.path.dirname(os.path.abspath(manifest))
     print(f"{COLOR_GRAY}{ICON_INFO} Resolving Maven module tree...{COLOR_RESET}")
-    all_poms = find_all_maven_poms(manifest)
+    all_poms = find_all_maven_poms(manifest, base_dir=manifest_dir)
     
     if len(all_poms) > 1:
         print(f"{COLOR_GRAY}{ICON_INFO} Multi-module project detected. Found {len(all_poms)} modules.{COLOR_RESET}")
@@ -3178,23 +3302,24 @@ def run_maven_checker(args):
     # 1. Parse root pom.xml for centralized dependencyManagement versions
     root_dep_mgmt = {}
     try:
-        tree = ET.parse(manifest)
-        root = tree.getroot()
-        ns = root.tag.split("}")[0].lstrip("{") if "}" in root.tag else ""
-        prefix = f"{{{ns}}}" if ns else ""
-        
-        # Base properties for root dependencyManagement
-        properties = {}
-        props_elem = root.find(f"{prefix}properties")
-        if props_elem is not None:
-            for elem in props_elem:
-                tag_local = elem.tag.split("}")[-1]
-                properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
-                
-        properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
-        properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
-        
-        root_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
+        if _is_safe_path(manifest_dir, manifest) and os.path.exists(manifest):
+            tree = safe_et_parse(manifest)
+            root = tree.getroot()
+            ns = root.tag.split("}")[0].lstrip("{") if "}" in root.tag else ""
+            prefix = f"{{{ns}}}" if ns else ""
+            
+            # Base properties for root dependencyManagement
+            properties = {}
+            props_elem = root.find(f"{prefix}properties")
+            if props_elem is not None:
+                for elem in props_elem:
+                    tag_local = elem.tag.split("}")[-1]
+                    properties[f"${{{tag_local}}}"] = (elem.text or "").strip()
+                    
+            properties["${project.version}"] = (root.findtext(f"{prefix}version") or "").strip()
+            properties["${project.groupId}"] = (root.findtext(f"{prefix}groupId") or "").strip()
+            
+            root_dep_mgmt = parse_maven_dependency_management(root, prefix, properties)
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading root dependencyManagement: {e}{COLOR_RESET}")
         
@@ -3202,7 +3327,7 @@ def run_maven_checker(args):
     pkg_data = {}
     print(f"{COLOR_GRAY}{ICON_INFO} Reading Maven pom.xml modules...{COLOR_RESET}")
     for pom in all_poms:
-        pom_deps = parse_maven_pom(pom, root_dep_mgmt)
+        pom_deps = parse_maven_pom(pom, root_dep_mgmt, base_dir=manifest_dir)
         pkg_data.update(pom_deps)
         
     targets = []
@@ -7369,8 +7494,16 @@ Examples:
         choices=["html", "json", "both"],
         help="Output report format when using --scan-all."
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print detailed stack trace and internal error messages to stdout during execution."
+    )
     
     args = parser.parse_args()
+    
+    global DEBUG_MODE
+    DEBUG_MODE = args.debug
     
     # CLI Validation
     if not args.scan_all and not args.tech:
