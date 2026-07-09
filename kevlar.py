@@ -131,12 +131,12 @@ def _is_safe_path(base_dir, target_path):
     """
     if not base_dir or not target_path:
         return False
-    abs_base = os.path.abspath(base_dir)
-    abs_target = os.path.abspath(target_path)
-    if abs_target == abs_base:
+    real_base = os.path.realpath(base_dir)
+    real_target = os.path.realpath(target_path)
+    if real_target == real_base:
         return True
-    base_prefix = abs_base if abs_base.endswith(os.path.sep) else abs_base + os.path.sep
-    return abs_target.startswith(base_prefix)
+    base_prefix = real_base if real_base.endswith(os.path.sep) else real_base + os.path.sep
+    return real_target.startswith(base_prefix)
 
 def _detect_xml_encoding(content):
     """

@@ -105,7 +105,7 @@ class TestKevlar(unittest.TestCase):
 
     def test_security_is_safe_path(self):
         # Convert path formatting dynamically depending on operating system (ensure proper separators)
-        base_dir = os.path.abspath("C:/workspace/myproject")
+        base_dir = os.path.realpath("C:/workspace/myproject")
         
         # Safe paths under base_dir
         self.assertTrue(kevlar._is_safe_path(base_dir, "C:/workspace/myproject"))
@@ -118,6 +118,31 @@ class TestKevlar(unittest.TestCase):
         
         # Partial match avoidance (e.g. /workspace/myproject-other should not be safe under /workspace/myproject)
         self.assertFalse(kevlar._is_safe_path(base_dir, "C:/workspace/myproject-other"))
+
+        # Test symlink traversal dynamically if supported by the OS and permission settings
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                real_temp_dir = os.path.realpath(temp_dir)
+                outside_file = os.path.join(os.path.dirname(real_temp_dir), "outside_secret.xml")
+                # Create the outside file
+                with open(outside_file, "w") as f:
+                    f.write("secret content")
+                try:
+                    symlink_path = os.path.join(real_temp_dir, "symlink_pom.xml")
+                    os.symlink(outside_file, symlink_path)
+                    # The symlink is located inside the base directory, but points outside.
+                    # It must be recognized as unsafe.
+                    self.assertFalse(kevlar._is_safe_path(real_temp_dir, symlink_path))
+                finally:
+                    if os.path.exists(outside_file):
+                        try:
+                            os.remove(outside_file)
+                        except OSError:
+                            pass
+        except (OSError, NotImplementedError):
+            # Skip if the OS/environment prevents creating symlinks (e.g., Windows without Developer Mode)
+            pass
 
     def test_security_xml_pre_validation(self):
         # Safe XMLs
