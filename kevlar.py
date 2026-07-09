@@ -138,6 +138,51 @@ def _is_safe_path(base_dir, target_path):
     base_prefix = abs_base if abs_base.endswith(os.path.sep) else abs_base + os.path.sep
     return abs_target.startswith(base_prefix)
 
+def _detect_xml_encoding(content):
+    """
+    Sniffs the encoding of XML bytes based on BOM or the first '<' character alignment.
+    Returns the name of the encoding as a string.
+    """
+    if not content:
+        return "utf-8"
+
+    # 1. Check for standard Byte Order Marks (BOM)
+    if content.startswith(b'\xef\xbb\xbf'):
+        return 'utf-8-sig'
+    if content.startswith(b'\xff\xfe\x00\x00'):
+        return 'utf-32-le'
+    if content.startswith(b'\x00\x00\xfe\xff'):
+        return 'utf-32-be'
+    if content.startswith(b'\xff\xfe'):
+        return 'utf-16'  # Python's utf-16 auto-detects and removes BOM
+    if content.startswith(b'\xfe\xff'):
+        return 'utf-16'  # Python's utf-16 auto-detects and removes BOM
+
+    # 2. Sniff encoding using first occurrence of '<' (0x3c)
+    # This detects UTF-16 and UTF-32 without BOM, and handles leading whitespace.
+    idx = -1
+    for i, b in enumerate(content[:128]):
+        if b == 0x3C:
+            idx = i
+            break
+
+    if idx != -1:
+        # Check alignment and surrounding null bytes to determine encoding.
+        # UTF-32-BE: '<' is U+0000003C (0x00 0x00 0x00 0x3c), so idx % 4 == 3.
+        if idx % 4 == 3 and idx >= 3 and content[idx-3:idx] == b'\x00\x00\x00':
+            return 'utf-32-be'
+        # UTF-32-LE: '<' is U+3C000000 (0x3c 0x00 0x00 0x00), so idx % 4 == 0.
+        if idx % 4 == 0 and idx + 3 < len(content) and content[idx+1:idx+4] == b'\x00\x00\x00':
+            return 'utf-32-le'
+        # UTF-16-BE: '<' is U+003C (0x00 0x3c), so idx % 2 == 1.
+        if idx % 2 == 1 and idx >= 1 and content[idx-1] == 0x00:
+            return 'utf-16-be'
+        # UTF-16-LE: '<' is U+3C00 (0x3c 0x00), so idx % 2 == 0.
+        if idx % 2 == 0 and idx + 1 < len(content) and content[idx+1] == 0x00:
+            return 'utf-16-le'
+
+    return "utf-8"
+
 def _validate_xml_raw_content(content):
     """
     Checks the raw XML string or bytes content for DOCTYPE or ENTITY tags to block XXE / Billion Laughs.
@@ -145,8 +190,9 @@ def _validate_xml_raw_content(content):
     if not content:
         return
     if isinstance(content, bytes):
+        encoding = _detect_xml_encoding(content)
         try:
-            text = content.decode('utf-8', errors='replace')
+            text = content.decode(encoding, errors='replace')
         except Exception:
             text = content.decode('latin-1', errors='replace')
     else:

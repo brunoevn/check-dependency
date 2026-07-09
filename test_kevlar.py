@@ -147,6 +147,45 @@ class TestKevlar(unittest.TestCase):
         with self.assertRaises(ValueError):
             kevlar._validate_xml_raw_content(unsafe_xml_5)
 
+        # Multi-encoding evasion tests (UTF-16 and UTF-32)
+        payload = """<!DOCTYPE foo [ <!ENTITY xxe SYSTEM "file:///etc/passwd"> ]><root>&xxe;</root>"""
+        
+        encodings_with_bom = [
+            ('utf-16-le', b'\xff\xfe'),
+            ('utf-16-be', b'\xfe\xff'),
+            ('utf-32-le', b'\xff\xfe\x00\x00'),
+            ('utf-32-be', b'\x00\x00\xfe\xff'),
+        ]
+        
+        encodings_no_bom = [
+            'utf-16-le',
+            'utf-16-be',
+            'utf-32-le',
+            'utf-32-be',
+        ]
+        
+        # Test with BOM
+        for enc, bom in encodings_with_bom:
+            encoded_bytes = bom + payload.encode(enc)
+            with self.assertRaises(ValueError):
+                kevlar._validate_xml_raw_content(encoded_bytes)
+                
+            # Leading whitespace + BOM
+            encoded_bytes_ws = bom + ("   \n  " + payload).encode(enc)
+            with self.assertRaises(ValueError):
+                kevlar._validate_xml_raw_content(encoded_bytes_ws)
+                
+        # Test without BOM
+        for enc in encodings_no_bom:
+            encoded_bytes = payload.encode(enc)
+            with self.assertRaises(ValueError):
+                kevlar._validate_xml_raw_content(encoded_bytes)
+                
+            # Leading whitespace (without BOM)
+            encoded_bytes_ws = (" \n\t " + payload).encode(enc)
+            with self.assertRaises(ValueError):
+                kevlar._validate_xml_raw_content(encoded_bytes_ws)
+
     def test_security_sanitize_error_message(self):
         import urllib.error
         import json
