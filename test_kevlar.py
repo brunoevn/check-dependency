@@ -338,5 +338,35 @@ class TestKevlar(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def test_wizard_utilities(self):
+        import kevlar_wizard
+        from datetime import date, timedelta
+        
+        # 1. Test validate_date_str
+        self.assertTrue(kevlar_wizard.validate_date_str("2026-12-31"))
+        self.assertFalse(kevlar_wizard.validate_date_str("2026-13-01")) # Invalid month
+        self.assertFalse(kevlar_wizard.validate_date_str("26-12-31"))   # Invalid year format
+        self.assertFalse(kevlar_wizard.validate_date_str("invalid"))
+        
+        # 2. Test validate_date_future
+        future_str = (date.today() + timedelta(days=5)).strftime("%Y-%m-%d")
+        past_str = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+        self.assertTrue(kevlar_wizard.validate_date_future(future_str))
+        self.assertFalse(kevlar_wizard.validate_date_future(past_str))
+        
+        # 3. Test validate_version_str
+        self.assertTrue(kevlar_wizard.validate_version_str("1.0.0"))
+        self.assertTrue(kevlar_wizard.validate_version_str("1.2"))
+        self.assertFalse(kevlar_wizard.validate_version_str("v1.0"))
+        self.assertFalse(kevlar_wizard.validate_version_str("abc"))
+        
+        # 4. Test parse_selection
+        self.assertEqual(kevlar_wizard.parse_selection("1, 2, 3", 5), [1, 2, 3])
+        self.assertEqual(kevlar_wizard.parse_selection("1-3", 5), [1, 2, 3])
+        self.assertEqual(kevlar_wizard.parse_selection("all", 5), [1, 2, 3, 4, 5])
+        self.assertEqual(kevlar_wizard.parse_selection("1, 2-4, 5", 5), [1, 2, 3, 4, 5])
+        self.assertIsNone(kevlar_wizard.parse_selection("1, 6", 5)) # Out of bounds
+        self.assertIsNone(kevlar_wizard.parse_selection("abc", 5))  # Invalid syntax
+
 if __name__ == "__main__":
     unittest.main()
