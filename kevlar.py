@@ -302,6 +302,74 @@ class PrereleaseKey:
     def __eq__(self, other):
         return compare_prereleases(self.prerelease, other.prerelease) == 0
 
+def _split_mixed_identifier(s):
+    """Splits a mixed alphanumeric identifier into chunks of digit and non-digit sequences.
+    Digits are converted to integers, non-digits remain as strings.
+    """
+    chunks = []
+    current = []
+    is_digit = None
+    for char in s:
+        char_is_digit = char.isdigit()
+        if is_digit is None:
+            is_digit = char_is_digit
+            current.append(char)
+        elif char_is_digit == is_digit:
+            current.append(char)
+        else:
+            chunk_str = "".join(current)
+            if is_digit:
+                chunks.append(int(chunk_str))
+            else:
+                chunks.append(chunk_str)
+            is_digit = char_is_digit
+            current = [char]
+    if current:
+        chunk_str = "".join(current)
+        if is_digit:
+            chunks.append(int(chunk_str))
+        else:
+            chunks.append(chunk_str)
+    return chunks
+
+def _compare_mixed_identifiers(part1, part2):
+    """Compares two non-numeric identifiers chunk by chunk.
+    Numeric chunks are compared numerically.
+    Alphanumeric chunks are compared lexicographically.
+    Numeric chunks have lower precedence than alphanumeric chunks.
+    """
+    chunks1 = _split_mixed_identifier(part1)
+    chunks2 = _split_mixed_identifier(part2)
+    
+    for c1, c2 in zip(chunks1, chunks2):
+        type1 = type(c1)
+        type2 = type(c2)
+        
+        if type1 is type2:
+            if c1 < c2:
+                return -1
+            elif c1 > c2:
+                return 1
+        else:
+            # Numeric chunk (int) vs alphanumeric chunk (str).
+            # Numeric chunks have lower precedence.
+            if type1 is int:
+                return -1
+            else:
+                return 1
+                
+    if len(chunks1) < len(chunks2):
+        return -1
+    elif len(chunks1) > len(chunks2):
+        return 1
+        
+    # Tie-breaker fallback to standard lexicographical comparison (e.g. comparing "rc01" vs "rc1")
+    if part1 < part2:
+        return -1
+    elif part1 > part2:
+        return 1
+    return 0
+
 def compare_prereleases(p1, p2):
     """Compares two pre-release strings according to SemVer rules.
     Empty string (stable release) has higher precedence than any pre-release.
@@ -331,10 +399,9 @@ def compare_prereleases(p1, p2):
             elif n1 > n2:
                 return 1
         elif not is_num1 and not is_num2:
-            if part1 < part2:
-                return -1
-            elif part1 > part2:
-                return 1
+            res = _compare_mixed_identifiers(part1, part2)
+            if res != 0:
+                return res
         else:
             return -1 if is_num1 else 1
             

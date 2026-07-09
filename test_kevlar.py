@@ -40,6 +40,19 @@ class TestKevlar(unittest.TestCase):
         self.assertEqual(kevlar.compare_versions("1.0.0-beta.11", "1.0.0-rc.1"), -1)
         self.assertEqual(kevlar.compare_versions("1.0.0-rc.1", "1.0.0"), -1)
         
+        # Alphanumeric pre-releases without dot separators (mixed tokens)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc10", "1.0.0-rc2"), 1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc2", "1.0.0-rc10"), -1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc10", "1.0.0-rc10"), 0)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc", "1.0.0-rc10"), -1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc10", "1.0.0-rc"), 1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-10rc", "1.0.0-2rc"), 1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-rc01", "1.0.0-rc1"), -1) # lexicographical fallback for ties with leading zeroes
+        
+        # Numeric vs non-numeric identifier precedence rule
+        self.assertEqual(kevlar.compare_versions("1.0.0-alpha.10", "1.0.0-alpha.10rc"), -1)
+        self.assertEqual(kevlar.compare_versions("1.0.0-alpha.11", "1.0.0-alpha.10rc"), -1)
+        
     def test_classify_update(self):
         self.assertEqual(kevlar.classify_update("1.2.3", "1.2.3"), "up-to-date")
         self.assertEqual(kevlar.classify_update("1.2.3", "2.0.0"), "major")
