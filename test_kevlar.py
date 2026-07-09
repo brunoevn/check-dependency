@@ -521,5 +521,70 @@ class TestKevlar(unittest.TestCase):
         self.assertFalse(kevlar.check_semver_satisfies("2.1.0", ">=1.2.3,<=2.0.0 || >=2.4.0,<=3.0.0"))
         self.assertTrue(kevlar.check_semver_satisfies("3.0.0", ">=1.2.3,<=2.0.0 || >=2.4.0,<=3.0.0"))
 
+    def test_configuration_drift_validation(self):
+        results = [
+            # 1. Matching constraint
+            {
+                "name": "matching-pkg",
+                "declared": "^1.2.0",
+                "installed": "1.2.5",
+                "status": "up-to-date",
+                "error": None
+            },
+            # 2. Violating constraint
+            {
+                "name": "violating-pkg",
+                "declared": "^1.2.0",
+                "installed": "2.0.1",
+                "status": "up-to-date",
+                "error": None
+            },
+            # 3. Git URL declared - should be skipped
+            {
+                "name": "git-pkg",
+                "declared": "git+https://github.com/foo/bar.git#semver:^1.2.0",
+                "installed": "2.0.1",
+                "status": "up-to-date",
+                "error": None
+            },
+            # 4. Missing declared - should be skipped
+            {
+                "name": "missing-dec",
+                "declared": "N/A",
+                "installed": "1.0.0",
+                "status": "up-to-date",
+                "error": None
+            },
+            # 5. Missing installed - should be skipped
+            {
+                "name": "missing-inst",
+                "declared": "^1.0.0",
+                "installed": "N/A",
+                "status": "up-to-date",
+                "error": None
+            }
+        ]
+        
+        kevlar.validate_configuration_drift(results)
+        
+        # Verify matching-pkg: no change
+        self.assertEqual(results[0]["status"], "up-to-date")
+        self.assertIsNone(results[0]["error"])
+        
+        # Verify violating-pkg: changed to error, with drift error message
+        self.assertEqual(results[1]["status"], "error")
+        self.assertIsNotNone(results[1]["error"])
+        self.assertIn("Configuration Drift", results[1]["error"])
+        self.assertIn("violates declared constraint", results[1]["error"])
+        
+        # Verify git-pkg: no change
+        self.assertEqual(results[2]["status"], "up-to-date")
+        
+        # Verify missing-dec: no change
+        self.assertEqual(results[3]["status"], "up-to-date")
+        
+        # Verify missing-inst: no change
+        self.assertEqual(results[4]["status"], "up-to-date")
+
 if __name__ == "__main__":
     unittest.main()

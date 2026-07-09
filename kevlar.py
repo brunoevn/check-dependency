@@ -4648,9 +4648,51 @@ def run_gradle_checker(args):
     
     return results, pkg_data, elapsed
 
+def validate_configuration_drift(results):
+    """
+    Validates that the installed version of each package satisfies the declared constraint.
+    If validation fails, changes the package's status to 'error' and sets a descriptive error message.
+    """
+    if not results:
+        return
+        
+    for r in results:
+        declared = r.get("declared")
+        installed = r.get("installed")
+        
+        if not declared or not installed:
+            continue
+        if str(declared).strip().lower() in ("n/a", "unknown", ""):
+            continue
+        if str(installed).strip().lower() in ("n/a", "unknown", ""):
+            continue
+            
+        decl_str = str(declared).strip()
+        inst_str = str(installed).strip()
+        
+        # Skip checking if declared constraint is a git URL or local path
+        if (decl_str.startswith(("git+", "git:", "http:", "https:", "ssh:", "file:")) 
+            or "github:" in decl_str.lower() 
+            or decl_str.startswith((".", "/"))):
+            continue
+            
+        # Ensure we can extract a valid semantic version from installed version
+        if parse_semver(inst_str) == (0, 0, 0, 0, 0, ''):
+            continue
+            
+        try:
+            satisfied = check_semver_satisfies(inst_str, decl_str)
+        except Exception:
+            satisfied = True
+            
+        if not satisfied:
+            r["status"] = "error"
+            r["error"] = f"Configuration Drift: Installed version '{inst_str}' violates declared constraint '{decl_str}'"
+
 # ==============================================================================
 # Output Formatting and Reporting
 # ==============================================================================
+
 
 def get_char_width(char):
     """Returns visual terminal width of a character."""
@@ -7813,7 +7855,7 @@ Examples:
                         r["technology"] = tech
                         
                     populate_remediation_recommendations(results, project_path)
-                    
+                    validate_configuration_drift(results)
                     apply_vulnerability_suppressions(results, args.suppress)
                     results = sorted(results, key=lambda x: x["name"].lower())
                     
@@ -7959,7 +8001,7 @@ Examples:
             r["technology"] = args.tech if args.tech != "auto" else r.get("technology")
             
     populate_remediation_recommendations(results, args.path)
-        
+    validate_configuration_drift(results)
     apply_vulnerability_suppressions(results, args.suppress)
     results = sorted(results, key=lambda x: x["name"].lower())
     
