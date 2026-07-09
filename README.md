@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 # 🛡️ Kevlar CheckDeps (`kevlar.py`)
+=======
+# Kevlar CheckDeps
+>>>>>>> ccea89d89e30344897b8345351665314fcbafc30
 
-A powerful, fast, and self-contained command-line utility written in Python to scan project dependencies. It identifies **outdated versions**, **deprecation notices** (yanked packages), and **security vulnerabilities** by querying package registries (npm/PyPI/NuGet/Packagist/Maven Central/Go Proxy/crates.io/RubyGems) and the Google OSV (Open Source Vulnerabilities) database.
+A powerful, fast, and self-contained command-line utility written in Python to scan project dependencies (SCA). It identifies **outdated versions**, **deprecation notices** (yanked packages), and **security vulnerabilities** by querying package registries (npm/PyPI/NuGet/Packagist/Maven Central/Go Proxy/crates.io/RubyGems) and the Google OSV (Open Source Vulnerabilities) database.
 
 Designed with a modular and extensible architecture, it supports checking direct and transitive dependencies and requires **zero external python package installations**.
 
