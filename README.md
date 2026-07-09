@@ -312,34 +312,73 @@ dependency_scan:
 
 ---
 
-## Vulnerability Suppression (Ignoring Alerts)
+## Vulnerability Suppression & Risk Governance
 
-You can suppress specific vulnerability alerts to prevent them from breaking your build pipelines. Create a JSON file (by default `kevlar-suppressions.json` in the project directory) containing your rules:
+Kevlar CheckDeps includes a robust, enterprise-grade policy engine to suppress specific vulnerability alerts, preventing them from breaking CI/CD build pipelines while ensuring security traceability and governance (aligned with ASVS V1 principles).
 
+### 1. Policy Structure (`kevlar-suppressions.json`)
+The suppressions file follows a formal schema containing global metadata and rule exclusions:
+
+*   **Metadata**: Registers the policy `version`, `last_modified` date, and the global AppSec/Security `approved_by` officer.
+*   **Rules Exclusion**: Every rule in the `suppressions` list requires:
+    *   `id`: Vulnerability identifier (e.g. CVE/GHSA) or a wildcard `*` to match all vulnerabilities for a package.
+    *   `package`: Exact name of the package.
+    *   `reason`: Must be one of the following risk governance enums:
+        *   `NOT_AFFECTED_BY_VULNERABILITY`: Vulnerability vector does not apply to our execution code.
+        *   `VULNERABILITY_MITIGATED_BY_ENVIRONMENT`: Mitigation occurs via container network or infrastructure.
+        *   `COMPENSATING_CONTROL_IMPLEMENTED`: Code-level sanitization or filters shield against the vulnerability.
+        *   `FALSE_POSITIVE`: Scanner flagging is confirmed as inaccurate.
+        *   `ACCEPTED_TEMPORARY_RISK`: Temporary exception granted for a limited time.
+    *   `justification`: Detailed technical explanation (minimum 15 characters).
+    *   `expires_at` (Format `YYYY-MM-DD`): Expiration date of the rule. If a scan is run after this date, the suppression is automatically ignored and the warning/alert reappears in the CLI/pipeline.
+    *   `ecosystem` (Optional): Ecosystem (e.g. `npm`, `pip`, `nuget`) to isolate packages with matching names.
+    *   `created_by` / `approved_by` (Optional): Developer and reviewer identifiers.
+
+#### Configuration Example
 ```json
 {
+  "$schema": "./kevlar-suppressions.schema.json",
+  "metadata": {
+    "version": "1.0.0",
+    "last_modified": "2026-07-08",
+    "approved_by": "AppSec Security Office"
+  },
   "suppressions": [
     {
-      "id": "GHSA-pq67-6m6q-mj2v",
-      "reason": "Redirecciones no deshabilitadas en PoolManager mitigadas en nuestro código."
+      "id": "CVE-2023-30861",
+      "package": "flask",
+      "ecosystem": "pip",
+      "reason": "NOT_AFFECTED_BY_VULNERABILITY",
+      "justification": "Our application does not use Flask's session cookies in a way that is vulnerable, as we store session data server-side in Redis.",
+      "expires_at": "2026-12-31",
+      "created_by": "Developer Alice",
+      "approved_by": "SecOps Bob"
     },
     {
-      "package": "certifi",
-      "reason": "Librería de certifi utilizada únicamente en entorno local/testeo."
-    },
-    {
-      "package": "django",
-      "id": "GHSA-2gwj-7jmv-h26r",
-      "reason": "Inyección SQL mitigada por nuestro uso del ORM nativo seguro."
+      "id": "*",
+      "package": "debug-package-test",
+      "ecosystem": "npm",
+      "reason": "VULNERABILITY_MITIGATED_BY_ENVIRONMENT",
+      "justification": "This package is only used during local development debugging and is entirely stripped from the production build artifact.",
+      "expires_at": "2027-01-01"
     }
   ]
 }
 ```
 
-Rules support:
-- Suppressing by Vulnerability ID (CVE or GHSA) globally across all packages.
-- Suppressing an entire package's vulnerabilities.
-- Suppressing a specific vulnerability ID on a specific package.
+### 2. Interactive Suppressions Wizard (`kevlar_wizard.py`)
+To make rule creation and maintenance easy and secure, Kevlar includes an interactive CLI wizard that automates the generation of your `kevlar-suppressions.json` policy:
+
+```powershell
+python kevlar_wizard.py
+```
+
+#### Wizard Capabilities:
+1.  **Report Loading**: Automatically reads your generated `report.json` to load active vulnerabilities.
+2.  **Visual Selection**: Lists vulnerabilities in a neat CLI table, letting you select index numbers (e.g., `1`, `1, 3`, range `1-3`, or `all`).
+3.  **Governance Prompts**: Walks you step-by-step through choosing a scope (vulnerability ID or wildcard package `*`), selection of the reason category, justification length checks, and expiration date calculation.
+4.  **Automatic Merging**: If an existing `kevlar-suppressions.json` is present, it merges new rules and prompts you before overwriting rules with matching targets.
+5.  **Schema Validation**: The output data is validated programmatically against the JSON schema rules to guarantee file integrity before write.
 
 ---
 
