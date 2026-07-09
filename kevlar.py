@@ -3137,8 +3137,11 @@ def parse_maven_dependency_management(root, prefix, properties):
                         dep_mgmt[f"{group}:{artifact}"] = version
     return dep_mgmt
 
-def find_all_maven_poms(root_pom_path, base_dir=None):
+def find_all_maven_poms(root_pom_path, base_dir=None, visited=None):
     """Recursively finds all module pom.xml files declared in a parent pom.xml."""
+    if visited is None:
+        visited = set()
+        
     abs_root_pom = os.path.abspath(root_pom_path)
     root_dir = os.path.dirname(abs_root_pom)
     if base_dir is None:
@@ -3146,12 +3149,15 @@ def find_all_maven_poms(root_pom_path, base_dir=None):
         
     poms = []
     if _is_safe_path(base_dir, abs_root_pom):
+        if abs_root_pom in visited:
+            return poms
+        visited.add(abs_root_pom)
         poms.append(abs_root_pom)
     else:
         return poms
         
     try:
-        if _is_safe_path(base_dir, abs_root_pom) and os.path.exists(abs_root_pom):
+        if os.path.exists(abs_root_pom):
             tree = safe_et_parse(abs_root_pom)
             root = tree.getroot()
             
@@ -3168,7 +3174,7 @@ def find_all_maven_poms(root_pom_path, base_dir=None):
                         module_path = module_name.replace("\\", "/")
                         module_pom = os.path.abspath(os.path.join(root_dir, module_path, "pom.xml"))
                         if _is_safe_path(base_dir, module_pom) and os.path.exists(module_pom):
-                            poms.extend(find_all_maven_poms(module_pom, base_dir=base_dir))
+                            poms.extend(find_all_maven_poms(module_pom, base_dir=base_dir, visited=visited))
     except Exception:
         pass
         

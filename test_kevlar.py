@@ -144,6 +144,60 @@ class TestKevlar(unittest.TestCase):
             # Skip if the OS/environment prevents creating symlinks (e.g., Windows without Developer Mode)
             pass
 
+    def test_maven_poms_cycles(self):
+        import tempfile
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            real_temp_dir = os.path.realpath(temp_dir)
+            
+            # Create a cycle: parent_pom -> child_pom -> parent_pom
+            parent_pom_path = os.path.join(real_temp_dir, "pom.xml")
+            child_dir = os.path.join(real_temp_dir, "child")
+            os.makedirs(child_dir, exist_ok=True)
+            child_pom_path = os.path.join(child_dir, "pom.xml")
+            
+            parent_xml = """<project>
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.test</groupId>
+                <artifactId>parent</artifactId>
+                <version>1.0.0</version>
+                <packaging>pom</packaging>
+                <modules>
+                    <module>child</module>
+                </modules>
+            </project>"""
+            
+            child_xml = """<project>
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.test</groupId>
+                <artifactId>child</artifactId>
+                <version>1.0.0</version>
+                <packaging>pom</packaging>
+                <modules>
+                    <module>..</module>
+                </modules>
+            </project>"""
+            
+            with open(parent_pom_path, "w", encoding="utf-8") as f:
+                f.write(parent_xml)
+            with open(child_pom_path, "w", encoding="utf-8") as f:
+                f.write(child_xml)
+                
+            # Execute search. With cycles, it must not throw RecursionError.
+            # It should return a list containing unique, absolute paths of both poms.
+            try:
+                poms = kevlar.find_all_maven_poms(parent_pom_path, base_dir=real_temp_dir)
+            except RecursionError:
+                self.fail("find_all_maven_poms raised RecursionError on cyclic dependencies")
+                
+            # Verify paths
+            expected_poms = {
+                os.path.abspath(parent_pom_path),
+                os.path.abspath(child_pom_path)
+            }
+            self.assertEqual(set(poms), expected_poms)
+            self.assertEqual(len(poms), 2)
+
     def test_security_xml_pre_validation(self):
         # Safe XMLs
         safe_xml_1 = "<project><dependencies></dependencies></project>"
