@@ -353,7 +353,9 @@ Rules support:
 
 ### 2. Version Comparison Logic
 To correctly flag outdated packages, the tool runs a custom Semantic Versioning parser that supports:
-- Up to 4 version segment digits (e.g. `1.2.3.4`).
-- Classification of updates into `Major` (breaking changes), `Minor` (new backward-compatible features), and `Patch` (bug fixes).
-- Auto-ignoring pre-release version metadata during update classifications.
-- Exact mapping of C# and VB.NET central package dependencies when CPM version tags are inherited.
+- **Multi-segment Versions**: Parses up to 4 version segment digits (e.g., `1.2.3.4`).
+- **PEP 440 & SemVer Epochs**: Handles version epochs (e.g. `1!2.0.0` vs `3.0.0`), allowing correct comparison of python/NuGet packages using epoch prefixes.
+- **Pre-releases**: Identifies both standard SemVer pre-releases (e.g., `1.2.3-alpha.1`) and PEP 440 pre-releases (e.g., `1.2.3a1`, `1.2.3rc2`), auto-ignoring them during standard update classifications.
+- **Platform Suffix Isolation**: Correctly filters platform/distribution suffixes (such as `-jre` or `-android`) so they are not wrongly categorized as pre-releases.
+- **Classification of Updates**: Categorizes updates into `Major` (breaking changes), `Minor` (new backward-compatible features), and `Patch` (bug fixes).
+- **CPM Inherited Mapping**: Exact mapping of C# and VB.NET central package dependencies when CPM version tags are inherited.

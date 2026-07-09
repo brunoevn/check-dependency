@@ -22,6 +22,23 @@ import xml.etree.ElementTree as ET
 import codecs
 import base64
 
+# Safe terminal output wrapping to prevent UnicodeEncodeError on Windows
+class SafeWriter:
+    def __init__(self, original_stream):
+        self.original_stream = original_stream
+        self.encoding = (original_stream.encoding if hasattr(original_stream, "encoding") else None) or "utf-8"
+    def write(self, data):
+        try:
+            self.original_stream.write(data)
+        except UnicodeEncodeError:
+            self.original_stream.write(data.encode(self.encoding, errors="replace").decode(self.encoding))
+    def flush(self):
+        if hasattr(self.original_stream, "flush"):
+            self.original_stream.flush()
+
+sys.stdout = SafeWriter(sys.stdout)
+sys.stderr = SafeWriter(sys.stderr)
+
 VERSION = "1.5.0"
 
 # External APIs Configuration
@@ -1582,9 +1599,6 @@ def apply_vulnerability_suppressions(results, suppress_path):
 
 def find_direct_parents(name, parents_map, direct_packages):
     """Finds which direct dependencies transitively required the given package."""
-    if name in direct_packages:
-        return {name}
-        
     visited = set()
     direct_parents = set()
     queue = [name]
@@ -1709,9 +1723,9 @@ def run_npm_checker(args):
     # Resolve transitive dependency parents
     direct_packages = set(pkg_data["all_direct"].keys()) if pkg_data else set()
     for r in results:
-        if pkg_data and r["name"] not in direct_packages and r["name"] != "node":
+        if r["name"] != "node":
             direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
-            r["required_by"] = sorted(list(direct_parents))
+            r["required_by"] = sorted(list(direct_parents - {r["name"]}))
         else:
             r["required_by"] = []
             
@@ -2570,11 +2584,8 @@ def run_nuget_checker(args):
     # Resolve transitive dependency parents
     direct_packages = set(pkg_data.keys()) if pkg_data else set()
     for r in results:
-        if pkg_data and r["name"] not in direct_packages:
-            direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
-            r["required_by"] = sorted(list(direct_parents))
-        else:
-            r["required_by"] = []
+        direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
+        r["required_by"] = sorted(list(direct_parents - {r["name"]}))
             
     elapsed = time.time() - start_time
     
@@ -2832,11 +2843,8 @@ def run_composer_checker(args):
     # Resolve transitive dependency parents
     direct_packages = set(all_direct.keys())
     for r in results:
-        if r["name"] not in direct_packages:
-            direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
-            r["required_by"] = sorted(list(direct_parents))
-        else:
-            r["required_by"] = []
+        direct_parents = find_direct_parents(r["name"], parents_data, direct_packages)
+        r["required_by"] = sorted(list(direct_parents - {r["name"]}))
             
     elapsed = time.time() - start_time
     
@@ -3740,11 +3748,8 @@ def run_rust_checker(args):
             
     # Resolve transitive dependency parents
     for r in results:
-        if r["name"] not in direct:
-            direct_parents = find_direct_parents(r["name"], parents, direct)
-            r["required_by"] = sorted(list(direct_parents))
-        else:
-            r["required_by"] = []
+        direct_parents = find_direct_parents(r["name"], parents, direct)
+        r["required_by"] = sorted(list(direct_parents - {r["name"]}))
             
     elapsed = time.time() - start_time
     
@@ -4014,11 +4019,8 @@ def run_ruby_checker(args):
             
     # Resolve transitive dependency parents
     for r in results:
-        if r["name"] not in direct:
-            direct_parents = find_direct_parents(r["name"], parents, direct)
-            r["required_by"] = sorted(list(direct_parents))
-        else:
-            r["required_by"] = []
+        direct_parents = find_direct_parents(r["name"], parents, direct)
+        r["required_by"] = sorted(list(direct_parents - {r["name"]}))
             
     elapsed = time.time() - start_time
     
@@ -5164,6 +5166,10 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         </svg>
         """
         
+        pkg_counts = {}
+        for r in results:
+            pkg_counts[r["name"]] = pkg_counts.get(r["name"], 0) + 1
+
         # Build Packages Cards List
         package_cards_html = []
         for i, r in enumerate(results):
@@ -5175,8 +5181,15 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             is_deprecated = r["deprecated"]
             error = r["error"]
             
+            is_direct_install = False
+            if declared:
+                if pkg_counts.get(name, 0) == 1:
+                    is_direct_install = True
+                else:
+                    is_direct_install = check_semver_satisfies(installed, declared)
+            
             name_esc = escape_html(name)
-            declared_esc = escape_html(declared)
+            declared_esc = escape_html(declared) if is_direct_install else ""
             installed_esc = escape_html(installed)
             latest_esc = escape_html(latest)
             status_esc = escape_html(status)
@@ -5186,13 +5199,13 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             dep_type = "Transitive"
             if name == "node":
                 dep_type = "Engine"
-            elif pkg_data:
+            elif pkg_data and is_direct_install:
                 if name in pkg_data.get("all_direct", {}):
                     dep_type = "Direct"
                 elif name in pkg_data.get("devDependencies", {}):
                     dep_type = "Dev"
                     
-            if r.get("required_by") and name != "node":
+            if r.get("required_by") and name != "node" and not is_direct_install:
                 dep_type = "Transitive"
                 
             dep_type_esc = escape_html(dep_type)
@@ -5315,7 +5328,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             # Required by details
             required_by_html = ""
             required_by = r.get("required_by", [])
-            if required_by:
+            if required_by and not is_direct_install:
                 required_by_esc = [escape_html(rb) for rb in required_by]
                 required_by_html = f"""
                 <div class="required-by-section">
@@ -5353,7 +5366,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 """
             
             remediation_button_html = ""
-            if r.get("remediation"):
+            if r.get("remediation") and is_direct_install:
                 manifest_abs_path = r["remediation"]["manifest_path"]
                 base_dir = os.path.dirname(os.path.abspath(filepath)) if filepath else os.getcwd()
                 if not base_dir:
@@ -5432,6 +5445,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                     </div>
                     <div class="header-right">
                         <div class="pkg-versions">
+                            {f'<span class="version-item"><span class="label">Declared:</span> {declared_esc}</span>' if declared_esc else ''}
                             <span class="version-item"><span class="label">Installed:</span> {installed_esc if installed_esc else declared_esc}</span>
                             <span class="version-item"><span class="label">Latest:</span> {latest_esc}</span>
                         </div>
