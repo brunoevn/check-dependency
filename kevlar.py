@@ -5860,9 +5860,11 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 ecosystem_name = tech_map.get(tech_val.lower(), tech_val) if tech_val else "Software Development"
                 
                 curr_ver = installed if installed else declared
+                latest_sm = r.get("latest_same_major") or latest
+                latest_abs = r.get("latest_absolute") or latest
                 
                 ai_button_html = f"""
-                <button class="btn-ai-prompt" onclick="copiarPromptRemediacion('{js_arg(name)}', '{js_arg(ecosystem_name)}', '{js_arg(curr_ver)}', '{js_arg(latest)}', '{js_arg(alert_type)}', '{js_arg(details_str)}'); event.stopPropagation();">📋 AI Prompt</button>
+                <button class="btn-ai-prompt" onclick="copiarPromptRemediacion('{js_arg(name)}', '{js_arg(ecosystem_name)}', '{js_arg(curr_ver)}', '{js_arg(latest_sm)}', '{js_arg(latest_abs)}', '{js_arg(alert_type)}', '{js_arg(details_str)}'); event.stopPropagation();">📋 AI Prompt</button>
                 """
 
             remediation_button_html = ""
@@ -7328,9 +7330,25 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             }}, 300);
         }}
         
-        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, targetVer, alertType, details) {{
+        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details) {{
             if (window.event) {{
                 window.event.stopPropagation();
+            }}
+            
+            let targetText = latestAbsolute;
+            let tasksIntro = `I want to update this package to version "${{latestAbsolute}}". Please perform the following tasks in a detailed and professional manner:`;
+            
+            if (latestSameMajor && latestAbsolute && latestSameMajor !== latestAbsolute) {{
+                if (latestSameMajor === currentVer) {{
+                    targetText = latestAbsolute;
+                    tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner:`;
+                }} else {{
+                    targetText = `${{latestSameMajor}} or ${{latestAbsolute}}`;
+                    tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner (taking into account the minor update to "${{latestSameMajor}}" vs the major update to "${{latestAbsolute}}" in your analysis):`;
+                }}
+            }} else if (latestSameMajor && latestSameMajor !== currentVer) {{
+                targetText = latestSameMajor;
+                tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner:`;
             }}
             
             const promptTexto = `Act as a Senior AppSec Expert and Principal Software Engineer specialized in the ${{ecosystem}} ecosystem.
@@ -7340,10 +7358,10 @@ An alert of type "${{alertType}}" has been detected.
 Detailed information/Associated alerts:
 ${{details}}
 
-I want to update this package to version "${{targetVer}}". Please perform the following tasks in a detailed and professional manner:
+${{tasksIntro}}
 
-1. Critically analyze any potential 'Breaking Changes' or destructive impacts when upgrading from version "${{currentVer}}" to "${{targetVer}}".
-2. Verify if the target version "${{targetVer}}" safely resolves the issues and vulnerabilities described in the details above.
+1. Critically analyze any potential 'Breaking Changes' or destructive impacts when upgrading from version "${{currentVer}}" to "${{targetText}}".
+2. Verify if the target version "${{targetText}}" safely resolves the issues and vulnerabilities described in the details above.
 3. Provide a step-by-step action plan with the exact console commands to perform the upgrade or mitigate risks if there are disruptive changes or incompatibilities.`;
 
             navigator.clipboard.writeText(promptTexto).then(() => {{

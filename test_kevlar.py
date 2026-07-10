@@ -586,5 +586,92 @@ class TestKevlar(unittest.TestCase):
         # Verify missing-inst: no change
         self.assertEqual(results[4]["status"], "up-to-date")
 
+    def test_export_html_report_prompt_parameters(self):
+        import tempfile
+        
+        results = [
+            # 1. Pip package (Composite target, same-major matches current)
+            {
+                "name": "certifi",
+                "declared": "2022.12.7",
+                "installed": "2022.12.7",
+                "latest": "2022.12.7 (latest: 2026.6.17)",
+                "status": "major",
+                "deprecated": False,
+                "error": None,
+                "latest_same_major": "2022.12.7",
+                "latest_absolute": "2026.6.17",
+                "technology": "pip",
+                "vulnerabilities": []
+            },
+            # 2. Npm package (Composite target, same-major is different from current)
+            {
+                "name": "lodash",
+                "declared": "4.17.15",
+                "installed": "4.17.15",
+                "latest": "4.17.21 (latest: 5.0.0)",
+                "status": "major",
+                "deprecated": False,
+                "error": None,
+                "latest_same_major": "4.17.21",
+                "latest_absolute": "5.0.0",
+                "technology": "npm",
+                "vulnerabilities": []
+            },
+            # 3. NuGet package (Simple target, outdated minor)
+            {
+                "name": "Newtonsoft.Json",
+                "declared": "13.0.1",
+                "installed": "13.0.1",
+                "latest": "13.0.3",
+                "status": "minor",
+                "deprecated": False,
+                "error": None,
+                "latest_same_major": "13.0.3",
+                "latest_absolute": "13.0.3",
+                "technology": "nuget",
+                "vulnerabilities": []
+            },
+            # 4. PHP package (Simple target, vulnerable but up-to-date)
+            {
+                "name": "guzzlehttp/guzzle",
+                "declared": "7.5.0",
+                "installed": "7.5.0",
+                "latest": "7.5.0",
+                "status": "up-to-date",
+                "deprecated": False,
+                "error": None,
+                "latest_same_major": "7.5.0",
+                "latest_absolute": "7.5.0",
+                "technology": "php",
+                "vulnerabilities": [
+                    {"id": "GHSA-1111-2222-3333", "summary": "test vuln PHP", "severity": "HIGH", "details": ""}
+                ]
+            }
+        ]
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            filepath = os.path.join(temp_dir, "report.html")
+            kevlar.export_html_report(results, {}, filepath, vuls_enabled=True)
+            
+            self.assertTrue(os.path.exists(filepath))
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Assert function definition and copierPromptRemediacion parameter signature in JS script block
+            self.assertIn("function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details)", content)
+            
+            # Assert correct arguments passed in buttons for the composite pip case
+            self.assertIn("copiarPromptRemediacion('certifi', 'Python / pip', '2022.12.7', '2022.12.7', '2026.6.17'", content)
+            
+            # Assert correct arguments passed in buttons for the composite npm case
+            self.assertIn("copiarPromptRemediacion('lodash', 'Node.js / npm', '4.17.15', '4.17.21', '5.0.0'", content)
+            
+            # Assert correct arguments passed for simple nuget case
+            self.assertIn("copiarPromptRemediacion('Newtonsoft.Json', '.NET / NuGet', '13.0.1', '13.0.3', '13.0.3'", content)
+            
+            # Assert correct arguments passed for php vuln case
+            self.assertIn("copiarPromptRemediacion('guzzlehttp/guzzle', 'PHP / Composer', '7.5.0', '7.5.0', '7.5.0'", content)
+
 if __name__ == "__main__":
     unittest.main()
