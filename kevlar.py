@@ -39,7 +39,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.7.1"
+VERSION = "1.8.0"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
