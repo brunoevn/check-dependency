@@ -659,7 +659,7 @@ class TestKevlar(unittest.TestCase):
                 content = f.read()
                 
             # Assert function definition and copierPromptRemediacion parameter signature in JS script block
-            self.assertIn("function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details)", content)
+            self.assertIn("function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy)", content)
             
             # Assert correct arguments passed in buttons for the composite pip case
             self.assertIn("copiarPromptRemediacion('certifi', 'Python / pip', '2022.12.7', '2022.12.7', '2026.6.17'", content)

@@ -1172,7 +1172,7 @@ def parse_yarn_lock(filepath):
                     integrity_val = stripped.split(" ", 1)[-1] if " " in stripped else stripped.split(":", 1)[-1]
                     integrity_val = integrity_val.strip().strip('"').strip(':').strip()
                     current_integrity = integrity_val
-                elif stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:"):
+                elif stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:") or stripped.startswith("peerDependencies:"):
                     in_dependencies = True
                 elif in_dependencies and indent_len >= 4:
                     dep_line = stripped
@@ -1284,7 +1284,7 @@ def parse_pnpm_lock(filepath):
                             integrity_dict[(current_pkg, current_version)] = m.group(1).strip()
                     
                     if indent == 4:
-                        if stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:"):
+                        if stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:") or stripped.startswith("peerDependencies:"):
                             in_pkg_deps = True
                         else:
                             in_pkg_deps = False
@@ -1362,13 +1362,20 @@ def parse_package_lock(filepath):
                     # Build parents map
                     deps = pkg_info.get("dependencies", {})
                     dev_deps = pkg_info.get("devDependencies", {})
-                    all_deps = {**deps, **dev_deps}
+                    peer_deps = pkg_info.get("peerDependencies", {})
+                    opt_deps = pkg_info.get("optionalDependencies", {})
+                    all_deps = {**deps, **dev_deps, **peer_deps, **opt_deps}
                     for child_name in all_deps.keys():
                         parents.setdefault(child_name, set()).add(pkg_name)
                         
             # Root package dependencies
             root_info = data["packages"].get("") or {}
-            root_deps = {**root_info.get("dependencies", {}), **root_info.get("devDependencies", {})}
+            root_deps = {
+                **root_info.get("dependencies", {}),
+                **root_info.get("devDependencies", {}),
+                **root_info.get("peerDependencies", {}),
+                **root_info.get("optionalDependencies", {})
+            }
             for child_name in root_deps.keys():
                 parents.setdefault(child_name, set()).add("root")
                         
@@ -5610,6 +5617,19 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         for r in results:
             pkg_counts[r["name"]] = pkg_counts.get(r["name"], 0) + 1
 
+        # Check if we should show the project path in the global header or per-card
+        unique_project_paths = sorted(list(set(r.get("project_path") for r in results if r.get("project_path"))))
+        show_project_globally = len(unique_project_paths) <= 1
+        
+        project_path_header_html = ""
+        if show_project_globally and unique_project_paths:
+            single_path = unique_project_paths[0]
+            techs = list(sorted(list(set(r.get("technology") for r in results if r.get("project_path") == single_path and r.get("technology")))))
+            tech_suffix = f" [{', '.join(techs)}]" if techs else ""
+            project_path_header_html = f'<div>Path: <strong>{escape_html(single_path)}{escape_html(tech_suffix)}</strong></div>'
+        elif not show_project_globally:
+            project_path_header_html = f'<div>Projects: <strong>Multiple ({len(unique_project_paths)})</strong></div>'
+
         # Build Packages Cards List
         package_cards_html = []
         for i, r in enumerate(results):
@@ -5651,7 +5671,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             dep_type_esc = escape_html(dep_type)
             
             project_badge = ""
-            if r.get("project_path"):
+            if not show_project_globally and r.get("project_path"):
                 proj_path = r["project_path"]
                 tech_val = r.get("technology", "")
                 project_badge = f'<span class="badge badge-project" style="font-family: monospace; text-transform: none; margin-left: 4px;">{escape_html(proj_path)} [{escape_html(tech_val)}]</span>'
@@ -5863,8 +5883,16 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 latest_sm = r.get("latest_same_major") or latest
                 latest_abs = r.get("latest_absolute") or latest
                 
+                proj_path = r.get("project_path") or os.getcwd()
+                abs_proj_path = os.path.abspath(proj_path)
+                proj_name = os.path.basename(abs_proj_path)
+                if not proj_name:
+                    proj_name = "Project"
+                
+                required_by_str = ", ".join(r.get("required_by", []))
+                
                 ai_button_html = f"""
-                <button class="btn-ai-prompt" onclick="copiarPromptRemediacion('{js_arg(name)}', '{js_arg(ecosystem_name)}', '{js_arg(curr_ver)}', '{js_arg(latest_sm)}', '{js_arg(latest_abs)}', '{js_arg(alert_type)}', '{js_arg(details_str)}'); event.stopPropagation();">📋 AI Prompt</button>
+                <button class="btn-ai-prompt" onclick="copiarPromptRemediacion('{js_arg(name)}', '{js_arg(ecosystem_name)}', '{js_arg(curr_ver)}', '{js_arg(latest_sm)}', '{js_arg(latest_abs)}', '{js_arg(alert_type)}', '{js_arg(details_str)}', '{js_arg(proj_name)}', '{js_arg(abs_proj_path)}', '{js_arg(dep_type)}', '{js_arg(required_by_str)}'); event.stopPropagation();">📋 AI Prompt</button>
                 """
 
             remediation_button_html = ""
@@ -6867,6 +6895,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             <div class="meta-info">
                 <div>Report Generated: <strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</strong></div>
                 <div>Ecosystem: <strong>{results[0]["name"].split(":")[0] if ":" in results[0]["name"] else "Project"}</strong></div>
+                {project_path_header_html}
             </div>
         </header>
         
@@ -7330,7 +7359,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             }}, 300);
         }}
         
-        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details) {{
+        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy) {{
             if (window.event) {{
                 window.event.stopPropagation();
             }}
@@ -7351,9 +7380,19 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner:`;
             }}
             
+            let pkgDesc = `the package "${{pkgName}}"`;
+            if (depType === 'Transitive' && requiredBy) {{
+                pkgDesc = `the transitive dependency package "${{pkgName}}" (which is required by ${{requiredBy}})`;
+            }}
+            
+            let projectContext = "";
+            if (projName && projDir) {{
+                projectContext = ` (name: ${{projName}} directory: ${{projDir}})`;
+            }}
+            
             const promptTexto = `Act as a Senior AppSec Expert and Principal Software Engineer specialized in the ${{ecosystem}} ecosystem.
 
-I have the package "${{pkgName}}" in my project, which is currently on version "${{currentVer}}".
+I have ${{pkgDesc}} in my project${{projectContext}}, which is currently on version "${{currentVer}}".
 An alert of type "${{alertType}}" has been detected.
 Detailed information/Associated alerts:
 ${{details}}
@@ -7362,7 +7401,8 @@ ${{tasksIntro}}
 
 1. Critically analyze any potential 'Breaking Changes' or destructive impacts when upgrading from version "${{currentVer}}" to "${{targetText}}".
 2. Verify if the target version "${{targetText}}" safely resolves the issues and vulnerabilities described in the details above.
-3. Provide a step-by-step action plan with the exact console commands to perform the upgrade or mitigate risks if there are disruptive changes or incompatibilities.`;
+3. Provide a step-by-step action plan with the exact console commands to perform the upgrade or mitigate risks if there are disruptive changes or incompatibilities.
+4. Check if any other libraries or transitive dependencies will become obsolete, unused, or orphaned as a result of this upgrade, and suggest how to safely clean them up (e.g., pruning unused packages).`;
 
             navigator.clipboard.writeText(promptTexto).then(() => {{
                 let btn = null;
