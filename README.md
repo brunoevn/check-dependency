@@ -11,7 +11,7 @@ Designed with a modular and extensible architecture, it supports checking direct
 ## Key Features
 
 - **Multi-Ecosystem Support**: Audits:
-  - **Node.js (`npm`) & Engines**: supporting `package.json`, `package-lock.json`, Yarn `yarn.lock`, and pnpm `pnpm-lock.yaml`. Audits declared Node.js version constraints (`engines.node`, `.nvmrc`, `.node-version`) against EOL and maintenance schedules fetched dynamically from official sources.
+  - **Node.js (`npm`) & Engines**: supporting `package.json` (including `peerDependencies` and `optionalDependencies`), `package-lock.json`, Yarn `yarn.lock`, and pnpm `pnpm-lock.yaml`. Audits declared Node.js version constraints (`engines.node`, `.nvmrc`, `.node-version`) against EOL and maintenance schedules fetched dynamically from official sources.
   - **Python (`pip`)**: supporting `requirements.txt`, Poetry `poetry.lock` + `pyproject.toml`, Pipenv `Pipfile.lock`, and PDM `pdm.lock`.
   - **.NET (`nuget`)**: supporting C# `.csproj`, VB.NET `.vbproj`, F# `.fsproj`, Solution files (`.sln`), and Central Package Management (`Directory.Packages.props`).
   - **PHP (`php`)**: supporting `composer.json` and `composer.lock`.
@@ -22,11 +22,16 @@ Designed with a modular and extensible architecture, it supports checking direct
   - **Rust (`rust`)**: supporting `Cargo.toml` and `Cargo.lock`.
   - **Ruby (`ruby`)**: supporting `Gemfile` and `Gemfile.lock`.
 - **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments.
+- **Configuration Drift Validation**: Automatically detects installed packages that violate declared semver constraint ranges, flagging them with an `error` status and detailed troubleshoot diagnostics.
 - **Deprecation Warnings**: 
   - For `npm`: Extracts maintainer deprecation notices for exact installed versions.
   - For `pip`: Identifies and reports "yanked" (deprecated/withdrawn) releases on PyPI.
   - For `rust`: Identifies and reports "yanked" crates on crates.io.
 - **Security Vulnerability Audits**: Queries the public Google OSV database to identify active vulnerabilities, including CVE/GHSA IDs, CVSS vectors, and advisory summaries.
+- **Hardened Validation Checkpoints**:
+  - **XML Multi-Byte Encoding Sniffer**: Sniffs UTF-16 and UTF-32 encodings (Big/Little Endian, with/without BOM) to prevent encoding-evasion bypasses for DOCTYPE/XML entity injections.
+  - **Maven Cycle Detection**: Prevents Denial-of-Service (`RecursionError`) stack overflows on cyclic POM references using visited path tracking.
+  - **Symlink Path-Safety Check**: Prevents path-traversal bypasses using realpath symlink resolution inside internal path security checks.
 - **Transitive Parent Tracing**:
   - For `npm`: Recursively builds a dependency graph from `package-lock.json`, Yarn `yarn.lock`, or pnpm `pnpm-lock.yaml`.
   - For `pip`: Parses transitives from lockfiles (`poetry.lock`, `Pipfile.lock`, `pdm.lock`) or `# via parent_name` comments inside `requirements.txt`.
@@ -44,9 +49,11 @@ Designed with a modular and extensible architecture, it supports checking direct
 - **NPM Registry Checksum Auditing**: For Node.js (`npm`), cross-validates local lockfile integrity hashes against official registry metadata, flagging **Missing Checksums**, **Weak Algorithms** (SHA-1), and critical **Integrity Mismatches**.
 - **Advanced HTML Filtering Controls**: Interactive HTML dashboards include:
   - **AND Intersection Filtering**: Combine multiple filters (e.g., *Outdated* + *Vulnerable*) to show only packages matching all selected categories.
-  - **Dependency Scope/Type Filtering**: Filter packages dynamically by their scope (e.g., *Direct*, *Dev*, *Transitive*, *Engine*) using the new **Scope** dropdown filter.
+  - **Dependency Scope/Type Filtering**: Filter packages dynamically by their scope (e.g., *Direct*, *Dev*, *Transitive*, *Engine*) using the **Scope** dropdown filter.
   - **Quick "only / all" Hover Controls**: Instantly isolate sub-filters or check all back on hover.
   - **Auto-closing & Smart Resetting**: Auto-closes menus when clicking outside and resets checkboxes when switching to *All* or *Clean*.
+  - **Interactive AI Remediation Prompt Helper**: Clipboard copy button (`📋 AI Prompt`) that dynamically generates high-fidelity remediation prompts (specifying same-major vs absolute updates, project scopes, transitive relations, and cleanup tasks) to easily direct LLMs.
+  - **Floating controls-toolbar**: Control toolbar transforms into a beautiful floating/sticky panel upon scrolling for instant desktop/mobile accessibility.
 
 ---
 
