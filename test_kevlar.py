@@ -672,6 +672,366 @@ class TestKevlar(unittest.TestCase):
             
             # Assert correct arguments passed for php vuln case
             self.assertIn("copiarPromptRemediacion('guzzlehttp/guzzle', 'PHP / Composer', '7.5.0', '7.5.0', '7.5.0'", content)
+            
+    def test_parse_package_lock_all_dep_types(self):
+        import tempfile
+        import json
+        lock_data = {
+            "name": "test-project",
+            "version": "1.0.0",
+            "lockfileVersion": 3,
+            "requires": True,
+            "packages": {
+                "": {
+                    "dependencies": {"direct-dep": "^1.0.0"},
+                    "devDependencies": {"dev-dep": "^2.0.0"}
+                },
+                "node_modules/direct-dep": {
+                    "version": "1.0.1",
+                    "dependencies": {"transitive-dep": "^1.1.0"},
+                    "peerDependencies": {"peer-dep": "^3.0.0"}
+                },
+                "node_modules/transitive-dep": {
+                    "version": "1.1.2",
+                    "optionalDependencies": {"opt-dep": "^4.0.0"}
+                },
+                "node_modules/peer-dep": {
+                    "version": "3.0.1"
+                },
+                "node_modules/opt-dep": {
+                    "version": "4.0.5"
+                }
+            }
+        }
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json", encoding="utf-8") as tmp:
+            json.dump(lock_data, tmp)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_package_lock(tmp_path)
+            self.assertEqual(resolved.get("direct-dep"), ["1.0.1"])
+            self.assertEqual(resolved.get("transitive-dep"), ["1.1.2"])
+            self.assertEqual(resolved.get("peer-dep"), ["3.0.1"])
+            self.assertEqual(resolved.get("opt-dep"), ["4.0.5"])
+            
+            self.assertIn("root", parents.get("direct-dep", []))
+            self.assertIn("root", parents.get("dev-dep", []))
+            self.assertIn("direct-dep", parents.get("transitive-dep", []))
+            self.assertIn("direct-dep", parents.get("peer-dep", []))
+            self.assertIn("transitive-dep", parents.get("opt-dep", []))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_parse_yarn_lock_all_dep_types(self):
+        import tempfile
+        content = (
+            "direct-dep@^1.0.0:\n"
+            "  version \"1.0.1\"\n"
+            "  dependencies:\n"
+            "    transitive-dep \"^1.1.0\"\n"
+            "\n"
+            "transitive-dep@^1.1.0:\n"
+            "  version \"1.1.2\"\n"
+            "  optionalDependencies:\n"
+            "    opt-dep \"^4.0.0\"\n"
+            "\n"
+            "opt-dep@^4.0.0:\n"
+            "  version \"4.0.5\"\n"
+            "  peerDependencies:\n"
+            "    peer-dep \"^3.0.0\"\n"
+            "\n"
+            "peer-dep@^3.0.0:\n"
+            "  version \"3.0.1\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock", encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_yarn_lock(tmp_path)
+            self.assertEqual(resolved.get("direct-dep"), ["1.0.1"])
+            self.assertEqual(resolved.get("transitive-dep"), ["1.1.2"])
+            self.assertEqual(resolved.get("opt-dep"), ["4.0.5"])
+            self.assertEqual(resolved.get("peer-dep"), ["3.0.1"])
+            
+            self.assertIn("direct-dep", parents.get("transitive-dep", []))
+            self.assertIn("transitive-dep", parents.get("opt-dep", []))
+            self.assertIn("opt-dep", parents.get("peer-dep", []))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_parse_pnpm_lock_all_dep_types(self):
+        import tempfile
+        content = (
+            "lockfileVersion: '6.0'\n"
+            "packages:\n"
+            "  /direct-dep@1.0.1:\n"
+            "    resolution: {integrity: sha512-abc}\n"
+            "    dependencies:\n"
+            "      transitive-dep: 1.1.2\n"
+            "  /transitive-dep@1.1.2:\n"
+            "    resolution: {integrity: sha512-def}\n"
+            "    optionalDependencies:\n"
+            "      opt-dep: 4.0.5\n"
+            "  /opt-dep@4.0.5:\n"
+            "    resolution: {integrity: sha512-ghi}\n"
+            "    peerDependencies:\n"
+            "      peer-dep: 3.0.1\n"
+            "  /peer-dep@3.0.1:\n"
+            "    resolution: {integrity: sha512-jkl}\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".yaml", encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_pnpm_lock(tmp_path)
+            self.assertEqual(resolved.get("direct-dep"), ["1.0.1"])
+            self.assertEqual(resolved.get("transitive-dep"), ["1.1.2"])
+            self.assertEqual(resolved.get("opt-dep"), ["4.0.5"])
+            self.assertEqual(resolved.get("peer-dep"), ["3.0.1"])
+            
+            self.assertIn("direct-dep", parents.get("transitive-dep", []))
+            self.assertIn("transitive-dep", parents.get("opt-dep", []))
+            self.assertIn("opt-dep", parents.get("peer-dep", []))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def test_python_lock_parsers(self):
+        import tempfile
+        import json
+        # Poetry
+        poetry_content = (
+            "[[package]]\n"
+            "name = \"flask\"\n"
+            "version = \"2.0.1\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
+            tmp.write(poetry_content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_poetry_lock(tmp_path)
+            self.assertEqual(resolved.get("flask"), ["2.0.1"])
+        finally:
+            os.remove(tmp_path)
+
+        # PDM
+        pdm_content = (
+            "[[package]]\n"
+            "name = \"django\"\n"
+            "version = \"3.2.5\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
+            tmp.write(pdm_content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_pdm_lock(tmp_path)
+            self.assertEqual(resolved.get("django"), ["3.2.5"])
+        finally:
+            os.remove(tmp_path)
+
+        # Pipenv (Pipfile.lock)
+        pipfile_data = {
+            "default": {
+                "requests": {"version": "==2.25.1"}
+            },
+            "develop": {
+                "pytest": {"version": "==6.2.4"}
+            }
+        }
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
+            json.dump(pipfile_data, tmp)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_pipfile_lock(tmp_path)
+            self.assertEqual(resolved.get("requests"), ["2.25.1"])
+            self.assertEqual(resolved.get("pytest"), ["6.2.4"])
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_composer_lock(self):
+        import tempfile
+        import json
+        composer_data = {
+            "packages": [
+                {"name": "guzzlehttp/guzzle", "version": "7.4.1"}
+            ],
+            "packages-dev": [
+                {"name": "phpunit/phpunit", "version": "9.5.10"}
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
+            json.dump(composer_data, tmp)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_composer_lock(tmp_path)
+            self.assertEqual(resolved.get("guzzlehttp/guzzle"), ["7.4.1"])
+            self.assertEqual(resolved.get("phpunit/phpunit"), ["9.5.10"])
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_go_mod(self):
+        import tempfile
+        content = (
+            "module github.com/test/mod\n"
+            "go 1.18\n"
+            "require (\n"
+            "    github.com/gin-gonic/gin v1.7.7\n"
+            "    golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd // indirect\n"
+            ")\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".mod") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, indirects = kevlar.parse_go_mod(tmp_path)
+            self.assertEqual(resolved.get("github.com/gin-gonic/gin"), "v1.7.7")
+            self.assertEqual(indirects.get("golang.org/x/crypto"), "v0.0.0-20220315160706-3147a52a75dd")
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_cargo_lock(self):
+        import tempfile
+        content = (
+            "[[package]]\n"
+            "name = \"serde\"\n"
+            "version = \"1.0.130\"\n"
+            "dependencies = [\n"
+            " \"serde_derive\",\n"
+            "]\n"
+            "\n"
+            "[[package]]\n"
+            "name = \"serde_derive\"\n"
+            "version = \"1.0.130\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_cargo_lock(tmp_path)
+            self.assertEqual(resolved.get("serde"), ["1.0.130"])
+            self.assertEqual(resolved.get("serde_derive"), ["1.0.130"])
+            self.assertIn("serde", parents.get("serde_derive", []))
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_gemfile_lock(self):
+        import tempfile
+        content = (
+            "GEM\n"
+            "  remote: https://rubygems.org/\n"
+            "  specs:\n"
+            "    rails (6.1.4)\n"
+            "      activesupport (= 6.1.4)\n"
+            "    activesupport (6.1.4)\n"
+            "\n"
+            "PLATFORMS\n"
+            "  ruby\n"
+            "\n"
+            "DEPENDENCIES\n"
+            "  rails\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_gemfile_lock(tmp_path)
+            self.assertEqual(resolved.get("rails"), "6.1.4")
+            self.assertEqual(resolved.get("activesupport"), "6.1.4")
+            self.assertIn("rails", parents.get("activesupport", []))
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_gradle_lockfile(self):
+        import tempfile
+        content = (
+            "# This is a Gradle lockfile\n"
+            "org.slf4j:slf4j-api:1.7.30=compileClasspath\n"
+            "empty=empty\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lockfile") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved = kevlar.parse_gradle_lockfile(tmp_path)
+            self.assertEqual(resolved.get("org.slf4j:slf4j-api"), "1.7.30")
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_libs_versions_toml(self):
+        import tempfile
+        content = (
+            "[versions]\n"
+            "groovy = \"3.0.5\"\n"
+            "\n"
+            "[libraries]\n"
+            "groovy-core = { module = \"org.codehaus.groovy:groovy\", version.ref = \"groovy\" }\n"
+            "groovy-json = \"org.codehaus.groovy:groovy-json:3.0.5\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".toml") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved = kevlar.parse_libs_versions_toml(tmp_path)
+            self.assertEqual(resolved.get("org.codehaus.groovy:groovy"), "3.0.5")
+            self.assertEqual(resolved.get("org.codehaus.groovy:groovy-json"), "3.0.5")
+        finally:
+            os.remove(tmp_path)
+
+    def test_apply_suppressions_project_path_lookup(self):
+        import tempfile
+        import shutil
+        import json
+        
+        # Create a temporary directory structure representing a project
+        temp_dir = tempfile.mkdtemp()
+        try:
+            supp_data = {
+                "metadata": {
+                    "version": "1.0.0",
+                    "last_modified": "2026-07-08",
+                    "approved_by": "TestTeam"
+                },
+                "suppressions": [
+                    {
+                        "id": "CVE-2023-1000",
+                        "package": "test-pkg",
+                        "ecosystem": "npm",
+                        "reason": "FALSE_POSITIVE",
+                        "justification": "This is a dummy justification for testing path lookup.",
+                        "expires_at": "2030-12-31"
+                    }
+                ]
+            }
+            
+            # Write suppressions file directly into the project directory
+            supp_path = os.path.join(temp_dir, "kevlar-suppressions.json")
+            with open(supp_path, "w", encoding="utf-8") as f:
+                json.dump(supp_data, f)
+                
+            results = [
+                {
+                    "name": "test-pkg",
+                    "status": "up-to-date",
+                    "installed": "1.0.0",
+                    "declared": "1.0.0",
+                    "deprecated": False,
+                    "technology": "npm",
+                    "vulnerabilities": [
+                        {"id": "CVE-2023-1000", "summary": "test vuln", "severity": "HIGH", "details": ""}
+                    ]
+                }
+            ]
+            
+            # Call apply_vulnerability_suppressions passing project_path and suppress_path=None
+            kevlar.apply_vulnerability_suppressions(results, None, project_path=temp_dir)
+            
+            # The vulnerability should be successfully suppressed
+            self.assertEqual(len(results[0]["vulnerabilities"]), 0)
+            self.assertEqual(len(results[0]["suppressed_vulnerabilities"]), 1)
+            self.assertEqual(results[0]["suppressed_vulnerabilities"][0]["suppressed_reason"], "FALSE_POSITIVE")
+        finally:
+            shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
     unittest.main()

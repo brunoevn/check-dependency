@@ -39,7 +39,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -1184,7 +1184,7 @@ def parse_yarn_lock(filepath):
                         for name in current_names:
                             parents.setdefault(dep_name, set()).add(name)
                 
-                if indent_len == 2 and not (stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:")):
+                if indent_len == 2 and not (stripped.startswith("dependencies:") or stripped.startswith("optionalDependencies:") or stripped.startswith("peerDependencies:")):
                     in_dependencies = False
                     
         if current_names and current_version:
@@ -1852,7 +1852,7 @@ def validate_suppressions_schema(data):
                     if not isinstance(val, str) or not val.strip():
                         raise ValueError(f"Optional field '{opt_field}' at index {idx} must be a non-empty string if specified.")
 
-def apply_vulnerability_suppressions(results, suppress_path):
+def apply_vulnerability_suppressions(results, suppress_path, project_path=None):
     """Applies vulnerability suppressions from a JSON file.
     Suppressed vulnerabilities are moved from 'vulnerabilities' to 'suppressed_vulnerabilities'.
     """
@@ -1867,9 +1867,15 @@ def apply_vulnerability_suppressions(results, suppress_path):
             print(f"{COLOR_RED}{ICON_ERROR} Suppress file not found: {suppress_path}{COLOR_RESET}")
             sys.exit(1)
     else:
-        default_path = "kevlar-suppressions.json"
-        if os.path.exists(default_path):
-            file_to_load = default_path
+        candidates = []
+        if project_path:
+            candidates.append(os.path.join(project_path, "kevlar-suppressions.json"))
+        candidates.append("kevlar-suppressions.json")
+        
+        for cand in candidates:
+            if os.path.exists(cand):
+                file_to_load = cand
+                break
             
     if not file_to_load:
         return
@@ -6147,6 +6153,129 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             flex-wrap: wrap;
         }}
         
+        /* Floating controls-toolbar styles on scroll */
+        .controls-placeholder {{
+            display: block;
+            margin-bottom: 25px;
+        }}
+        
+        @media (min-width: 768px) {{
+            .controls-toolbar.floating {{
+                position: fixed;
+                top: 20px;
+                right: max(20px, calc((100vw - 1000px) / 2 + 20px));
+                width: 240px;
+                flex-direction: column;
+                align-items: stretch;
+                background-color: rgba(17, 24, 39, 0.95);
+                backdrop-filter: blur(10px);
+                border: 1px solid var(--primary);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+                z-index: 1000;
+                animation: floatIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                border-radius: 16px;
+                padding: 20px;
+                box-sizing: border-box;
+                gap: 15px;
+            }}
+            
+            .controls-toolbar.floating .search-box {{
+                max-width: none;
+                width: 100%;
+            }}
+            
+            .controls-toolbar.floating .filter-buttons {{
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }}
+            
+            .controls-toolbar.floating .filter-group {{
+                display: block;
+                width: 100%;
+            }}
+            
+            .controls-toolbar.floating .filter-btn {{
+                width: 100%;
+                text-align: left;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                box-sizing: border-box;
+            }}
+            
+            .controls-toolbar.floating .filter-dropdown {{
+                top: 0;
+                right: calc(100% + 10px);
+                left: auto;
+                margin-top: 0;
+                box-shadow: -5px 10px 25px rgba(0, 0, 0, 0.6);
+                animation: floatDropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            }}
+            
+            .packages-list.floating-active {{
+                padding-right: 280px;
+            }}
+        }}
+        
+        /* Mobile Sticky fallback */
+        @media (max-width: 767px) {{
+            .controls-toolbar.floating {{
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                border-radius: 0;
+                border-left: 0;
+                border-right: 0;
+                border-top: 0;
+                background-color: rgba(17, 24, 39, 0.95);
+                backdrop-filter: blur(10px);
+                z-index: 1000;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+                padding: 10px 15px;
+                margin-bottom: 0;
+                box-sizing: border-box;
+                animation: mobileStickyIn 0.2s ease;
+            }}
+            
+            .controls-toolbar.floating .search-box {{
+                max-width: none;
+                width: 100%;
+            }}
+        }}
+        
+        @keyframes floatIn {{
+            from {{
+                transform: translateX(30px);
+                opacity: 0;
+            }}
+            to {{
+                transform: translateX(0);
+                opacity: 1;
+            }}
+        }}
+        
+        @keyframes floatDropdownIn {{
+            from {{
+                transform: translateX(10px);
+                opacity: 0;
+            }}
+            to {{
+                transform: translateX(0);
+                opacity: 1;
+            }}
+        }}
+        
+        @keyframes mobileStickyIn {{
+            from {{
+                transform: translateY(-100%);
+            }}
+            to {{
+                transform: translateY(0);
+            }}
+        }}
+        
         .search-box {{
             flex-grow: 1;
             position: relative;
@@ -6353,6 +6482,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             display: flex;
             flex-direction: column;
             gap: 15px;
+            transition: padding-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }}
         
         .package-card {{
@@ -6939,7 +7069,8 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         </div>
         
         <!-- Controls -->
-        <div class="controls-toolbar">
+        <div class="controls-placeholder">
+            <div class="controls-toolbar">
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="Search packages..." oninput="onSearchInput()">
                 <button id="clearSearch" onclick="clearSearchInput()">&times;</button>
@@ -7072,6 +7203,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 <button class="filter-btn" data-cat="clean" onclick="setCategory('clean', event)">Clean</button>
             </div>
         </div>
+    </div>
         
         <!-- Packages List -->
         <div class="packages-list">
@@ -7080,6 +7212,45 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     </div>
     
     <script>
+        // Floating toolbar logic on scroll
+        document.addEventListener('DOMContentLoaded', () => {{
+            const toolbar = document.querySelector('.controls-toolbar');
+            const placeholder = document.querySelector('.controls-placeholder');
+            const pkgList = document.querySelector('.packages-list');
+            
+            function updatePlaceholderHeight() {{
+                if (placeholder && toolbar && !toolbar.classList.contains('floating')) {{
+                    placeholder.style.height = toolbar.offsetHeight + 'px';
+                }}
+            }}
+            
+            // Set initial height
+            updatePlaceholderHeight();
+            window.addEventListener('resize', updatePlaceholderHeight);
+            
+            // Observe changes in toolbar height (e.g. wrap on screen resize)
+            if (window.ResizeObserver) {{
+                const ro = new ResizeObserver(() => {{
+                    updatePlaceholderHeight();
+                }});
+                ro.observe(toolbar);
+            }}
+            
+            window.addEventListener('scroll', () => {{
+                if (!toolbar || !placeholder) return;
+                
+                const placeholderRect = placeholder.getBoundingClientRect();
+                
+                if (placeholderRect.top < 20) {{
+                    toolbar.classList.add('floating');
+                    pkgList.classList.add('floating-active');
+                }} else {{
+                    toolbar.classList.remove('floating');
+                    pkgList.classList.remove('floating-active');
+                }}
+            }});
+        }});
+
         let activeCategories = ['all'];
         
         function selectOnly(event, value) {{
@@ -8082,7 +8253,7 @@ Examples:
                         
                     populate_remediation_recommendations(results, project_path)
                     validate_configuration_drift(results)
-                    apply_vulnerability_suppressions(results, args.suppress)
+                    apply_vulnerability_suppressions(results, args.suppress, project_path=project_path)
                     results = sorted(results, key=lambda x: x["name"].lower())
                     
                     print_results_table(results, pkg_data, args.show_all, args.vuls)
@@ -8228,7 +8399,7 @@ Examples:
             
     populate_remediation_recommendations(results, args.path)
     validate_configuration_drift(results)
-    apply_vulnerability_suppressions(results, args.suppress)
+    apply_vulnerability_suppressions(results, args.suppress, project_path=args.path)
     results = sorted(results, key=lambda x: x["name"].lower())
     
     print_results_table(results, pkg_data, args.show_all, args.vuls)

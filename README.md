@@ -198,7 +198,7 @@ python kevlar.py --update
 | `--fail-on-vulns` | | `None` | Break the build (exit code 1) on security issues. Accepts threshold limits (e.g., `"critical:2,high:4"`). |
 | `--fail-on-deprecated` | | `None` | Break the build (exit code 1) if deprecated packages are found. Optionally specify count threshold (e.g., `3`). |
 | `--fail-on-outdated` | | `None` | Break the build (exit code 1) if outdated packages are found. Optionally specify count threshold (e.g., `3`) or specific status levels (e.g., `major:2,minor:4`). |
-| `--suppress` | `-s` | `None` | Path to a JSON file containing vulnerability suppressions (default: look for `kevlar-suppressions.json` in the active path). |
+| `--suppress` | `-s` | `None` | Path to a JSON file containing vulnerability suppressions (default: look for `kevlar-suppressions.json` in the project path or current directory). |
 | `--update` | | `False` | Check for updates from GitHub. |
 ---
 
@@ -317,7 +317,13 @@ dependency_scan:
 Kevlar CheckDeps includes a robust, enterprise-grade policy engine to suppress specific vulnerability alerts, preventing them from breaking CI/CD build pipelines while ensuring security traceability and governance (aligned with ASVS V1 principles).
 
 ### 1. Policy Structure (`kevlar-suppressions.json`)
-The suppressions file follows a formal schema containing global metadata and rule exclusions:
+The suppressions file follows a formal schema containing global metadata and rule exclusions.
+
+> [!NOTE]
+> `kevlar-suppressions.example.json` is provided in the repository root as a template/example. The active policy file, `kevlar-suppressions.json`, is ignored by Git (`.gitignore`).
+> During a scan, Kevlar searches for `kevlar-suppressions.json` inside each project's directory first, then falls back to the current working directory, enabling different projects in a multi-project codebase to define their own independent policy rules.
+
+The policy structure is:
 
 *   **Metadata**: Registers the policy `version`, `last_modified` date, and the global AppSec/Security `approved_by` officer.
 *   **Rules Exclusion**: Every rule in the `suppressions` list requires:
@@ -377,7 +383,7 @@ python kevlar_wizard.py
 1.  **Report Loading**: Automatically reads your generated `report.json` to load active vulnerabilities.
 2.  **Visual Selection**: Lists vulnerabilities in a neat CLI table, letting you select index numbers (e.g., `1`, `1, 3`, range `1-3`, or `all`).
 3.  **Governance Prompts**: Walks you step-by-step through choosing a scope (vulnerability ID or wildcard package `*`), selection of the reason category, justification length checks, and expiration date calculation.
-4.  **Automatic Merging**: If an existing `kevlar-suppressions.json` is present, it merges new rules and prompts you before overwriting rules with matching targets.
+4.  **Automatic Merging & Path Confirmation**: Prompts you to confirm or customize the target file path (defaulting next to the loaded report file), and merges new rules into an existing policy if present.
 5.  **Schema Validation**: The output data is validated programmatically against the JSON schema rules to guarantee file integrity before write.
 
 ---

@@ -29,7 +29,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 # ANSI escape codes for styling (unified with kevlar.py theme)
 COLOR_RESET = "\033[0m"
@@ -378,7 +378,15 @@ def main():
     print(f"\n{COLOR_BOLD}Step 4: Save policy configurations{COLOR_RESET}")
     print("---------------------------------------")
     
-    target_file = "kevlar-suppressions.json"
+    # Resolve default path next to the report
+    report_dir = os.path.dirname(report_path) if report_path else ""
+    default_target = os.path.join(report_dir, "kevlar-suppressions.json") if report_dir else "kevlar-suppressions.json"
+    
+    print(f"Target suppression policy file: {COLOR_BOLD}{default_target}{COLOR_RESET}")
+    target_file = prompt_string(
+        "Confirm or customize target file path",
+        default=default_target
+    )
     existing_data = None
     merge_mode = False
     
