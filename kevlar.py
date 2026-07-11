@@ -2399,6 +2399,20 @@ def find_pip_files(base_path):
         
     return None, None, None
 
+def _iter_lock_blocks(filepath):
+    """Helper generator to read a lockfile line by line and yield blocks
+    separated by [[package]].
+    """
+    current_block = []
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip() == "[[package]]":
+                yield "".join(current_block)
+                current_block = []
+            else:
+                current_block.append(line)
+        yield "".join(current_block)
+
 def parse_poetry_lock(filepath):
     """Parses poetry.lock to extract resolved versions and their parent relations.
     Returns:
@@ -2407,11 +2421,9 @@ def parse_poetry_lock(filepath):
     resolved = {}
     parents = {}
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-            
-        blocks = content.split("[[package]]")
-        for block in blocks[1:]:
+        blocks_gen = _iter_lock_blocks(filepath)
+        next(blocks_gen, None)  # Skip the first block (before the first [[package]])
+        for block in blocks_gen:
             lines = block.splitlines()
             name = None
             version = None
@@ -2456,11 +2468,9 @@ def parse_pdm_lock(filepath):
     resolved = {}
     parents = {}
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-            
-        blocks = content.split("[[package]]")
-        for block in blocks[1:]:
+        blocks_gen = _iter_lock_blocks(filepath)
+        next(blocks_gen, None)  # Skip the first block (before the first [[package]])
+        for block in blocks_gen:
             lines = block.splitlines()
             name = None
             version = None

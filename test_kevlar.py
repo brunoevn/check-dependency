@@ -822,11 +822,27 @@ class TestKevlar(unittest.TestCase):
     def test_python_lock_parsers(self):
         import tempfile
         import json
-        # Poetry
+        # Poetry (Detailed check)
         poetry_content = (
+            "# Some metadata comments at start\n"
+            "[metadata]\n"
+            "lock-version = \"2.0\"\n"
+            "\n"
             "[[package]]\n"
             "name = \"flask\"\n"
             "version = \"2.0.1\"\n"
+            "description = \"A simple framework\"\n"
+            "category = \"main\"\n"
+            "optional = false\n"
+            "python-versions = \">=3.6\"\n"
+            "\n"
+            "[package.dependencies]\n"
+            "click = \">=7.1.2\"\n"
+            "itsdangerous = \">=2.0\"\n"
+            "\n"
+            "[[package]]\n"
+            "name = \"click\"\n"
+            "version = \"8.0.1\"\n"
         )
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
             tmp.write(poetry_content)
@@ -834,14 +850,34 @@ class TestKevlar(unittest.TestCase):
         try:
             resolved, parents = kevlar.parse_poetry_lock(tmp_path)
             self.assertEqual(resolved.get("flask"), ["2.0.1"])
+            self.assertEqual(resolved.get("click"), ["8.0.1"])
+            self.assertIn("flask", parents.get("click", []))
+            self.assertIn("flask", parents.get("itsdangerous", []))
         finally:
             os.remove(tmp_path)
 
-        # PDM
+        # Poetry exception check (should not raise, but print warning and return empty dicts)
+        resolved, parents = kevlar.parse_poetry_lock("nonexistent_file_path.lock")
+        self.assertEqual(resolved, {})
+        self.assertEqual(parents, {})
+
+        # PDM (Detailed check)
         pdm_content = (
+            "# Some PDM comments\n"
+            "[metadata]\n"
+            "groups = [\"default\"]\n"
+            "\n"
             "[[package]]\n"
             "name = \"django\"\n"
             "version = \"3.2.5\"\n"
+            "dependencies = [\n"
+            "    \"asgiref>=3.3.2,<4\",\n"
+            "    \"sqlparse>=0.2.2\",\n"
+            "]\n"
+            "\n"
+            "[[package]]\n"
+            "name = \"asgiref\"\n"
+            "version = \"3.4.1\"\n"
         )
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
             tmp.write(pdm_content)
@@ -849,8 +885,16 @@ class TestKevlar(unittest.TestCase):
         try:
             resolved, parents = kevlar.parse_pdm_lock(tmp_path)
             self.assertEqual(resolved.get("django"), ["3.2.5"])
+            self.assertEqual(resolved.get("asgiref"), ["3.4.1"])
+            self.assertIn("django", parents.get("asgiref", []))
+            self.assertIn("django", parents.get("sqlparse", []))
         finally:
             os.remove(tmp_path)
+
+        # PDM exception check
+        resolved, parents = kevlar.parse_pdm_lock("nonexistent_file_path.lock")
+        self.assertEqual(resolved, {})
+        self.assertEqual(parents, {})
 
         # Pipenv (Pipfile.lock)
         pipfile_data = {
