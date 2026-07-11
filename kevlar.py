@@ -9,6 +9,7 @@ Supports multiple technologies.
 
 import os
 import sys
+import string
 import json
 import re
 import argparse
@@ -5542,6 +5543,1567 @@ def populate_remediation_recommendations(results, default_project_path):
             if found:
                 break
 
+class HTMLReportTemplateProvider:
+    @staticmethod
+    def get_template():
+        return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dependency Status & Security Report</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #111827;
+            --card-hover: #1f2937;
+            --text-main: #f9fafb;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
+            --primary: #38bdf8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #0ea5e9;
+            --depr: #a855f7;
+            --muted: #4b5563;
+        }
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .container {
+            max-width: 1000px;
+            width: 100%;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 800;
+            background: linear-gradient(135deg, #38bdf8 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .meta-info {
+            font-size: 13px;
+            color: var(--text-muted);
+            text-align: right;
+        }
+        
+        /* Grid Dashboard */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        .stat-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        
+        .stat-card.primary-large {
+            grid-column: span 2;
+        }
+        
+        .stat-val {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        
+        .stat-lbl {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-card.primary .stat-val, .stat-card.primary-large .stat-val { color: var(--primary); }
+        .stat-card.warning .stat-val { color: var(--warning); }
+        .stat-card.error .stat-val { color: var(--error); }
+        .stat-card.success .stat-val { color: var(--success); }
+        .stat-card.muted .stat-val { color: var(--text-muted); }
+        .stat-card.depr .stat-val { color: var(--depr); }
+        
+        /* Controls Toolbar */
+        .controls-toolbar {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        /* Floating controls-toolbar styles on scroll */
+        .controls-placeholder {
+            display: block;
+            margin-bottom: 25px;
+        }
+        
+        @media (min-width: 768px) {
+            .controls-toolbar.floating {
+                position: fixed;
+                top: 0;
+                left: 50%;
+                transform: translate(-50%, 0);
+                width: 100%;
+                max-width: 1000px;
+                border-radius: 0 0 12px 12px;
+                border-left: 1px solid var(--border-color);
+                border-right: 1px solid var(--border-color);
+                border-top: none;
+                border-bottom: 1px solid var(--border-color);
+                background-color: rgba(17, 24, 39, 0.95);
+                backdrop-filter: blur(10px);
+                z-index: 1000;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+                padding: 10px 20px;
+                box-sizing: border-box;
+                animation: desktopStickyIn 0.2s ease;
+            }
+        }
+        
+        /* Mobile Sticky fallback */
+        @media (max-width: 767px) {
+            .controls-toolbar.floating {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                border-radius: 0;
+                border-left: 0;
+                border-right: 0;
+                border-top: 0;
+                background-color: rgba(17, 24, 39, 0.95);
+                backdrop-filter: blur(10px);
+                z-index: 1000;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+                padding: 10px 15px;
+                margin-bottom: 0;
+                box-sizing: border-box;
+                animation: mobileStickyIn 0.2s ease;
+            }
+            
+            .controls-toolbar.floating .search-box {
+                max-width: none;
+                width: 100%;
+            }
+        }
+        
+        @keyframes desktopStickyIn {
+            from {
+                transform: translate(-50%, -100%);
+            }
+            to {
+                transform: translate(-50%, 0);
+            }
+        }
+        
+        @keyframes mobileStickyIn {
+            from {
+                transform: translateY(-100%);
+            }
+            to {
+                transform: translateY(0);
+            }
+        }
+        
+        .search-box {
+            flex-grow: 1;
+            position: relative;
+            max-width: 400px;
+            min-width: 200px;
+        }
+        
+        .search-box input {
+            width: 100%;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-main);
+            padding: 10px 35px 10px 12px;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        #clearSearch {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            display: none;
+            font-family: sans-serif;
+        }
+        
+        #clearSearch:hover {
+            color: var(--text-main);
+        }
+        
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .filter-group {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .chevron-inline {
+            display: inline-block;
+            font-size: 8px;
+            margin-left: 6px;
+            opacity: 0.7;
+            transition: transform 0.2s ease;
+        }
+        
+        .filter-btn.dropdown-open .chevron-inline {
+            transform: rotate(180deg);
+        }
+        
+        .filter-dropdown {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            z-index: 100;
+            background: rgba(17, 24, 39, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            min-width: 200px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.5);
+            display: none;
+        }
+        
+        .dropdown-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            width: 100%;
+        }
+        
+        .row-actions {
+            display: inline-flex;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.15s ease;
+            user-select: none;
+        }
+        
+        .dropdown-row:hover .row-actions {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        .action-btn {
+            font-size: 10px;
+            color: var(--primary);
+            cursor: pointer;
+            text-decoration: underline;
+            font-weight: 500;
+        }
+        
+        .action-btn:hover {
+            color: var(--text-main);
+        }
+        
+        .action-separator {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin: 0 3px;
+        }
+        
+        @keyframes fadeInSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .filter-dropdown.show {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            animation: fadeInSlide 0.15s ease-out forwards;
+        }
+        
+        .filter-dropdown label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-main);
+            cursor: pointer;
+            user-select: none;
+            transition: opacity 0.15s;
+        }
+        
+        .filter-dropdown label:hover {
+            opacity: 0.85;
+        }
+        
+        .filter-dropdown input[type="checkbox"] {
+            accent-color: var(--primary);
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+        }
+        
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .crit-dot { background-color: var(--error); }
+        .high-dot { background-color: #f97316; }
+        .med-dot { background-color: var(--warning); }
+        .low-dot { background-color: var(--info); }
+        .unkn-dot { background-color: var(--text-muted); }
+        
+        .filter-btn {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 13px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+        }
+        
+        .filter-btn:hover {
+            background-color: var(--card-hover);
+            color: var(--text-main);
+        }
+        
+        .filter-btn.active {
+            background: linear-gradient(135deg, #38bdf8 0%, #3b82f6 100%);
+            border-color: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+        
+        /* Packages list */
+        .packages-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .package-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: border-color 0.2s ease;
+        }
+        
+        .package-card:hover {
+            border-color: var(--muted);
+        }
+        
+        .card-header {
+            padding: 18px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            gap: 20px;
+        }
+        
+        .card-header:hover {
+            background-color: #161e2e;
+        }
+        
+        .header-left {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .pkg-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .pkg-name {
+            font-weight: 700;
+            font-size: 16px;
+        }
+        
+        .pkg-type-badge {
+            font-size: 10px;
+            background-color: #1e293b;
+            color: var(--text-muted);
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+        
+        .pkg-badges {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        
+        .badge {
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+        
+        .badge-success { background-color: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .badge-warning { background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .badge-error { background-color: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .badge-info { background-color: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3); }
+        .badge-depr { background-color: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+        .badge-danger { background-color: rgba(220, 38, 38, 0.25); color: #fca5a5; border: 1px solid rgba(220, 38, 38, 0.4); }
+        .badge-muted { background-color: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+        .badge-project { background-color: rgba(55, 65, 81, 0.4); color: #9ca3af; border: 1px solid rgba(75, 85, 99, 0.4); }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 25px;
+        }
+        
+        .pkg-versions {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 13px;
+            text-align: right;
+        }
+        
+        .pkg-versions .label {
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+        
+        .chevron {
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+        }
+        
+        /* Details Expanded */
+        .card-details {
+            display: none;
+            padding: 20px;
+            background-color: #0d131f;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .required-by-section {
+            font-size: 12px;
+            color: var(--text-muted);
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: inline-block;
+        }
+        
+        .error-section {
+            color: #f87171;
+            font-size: 13px;
+            background-color: rgba(220, 38, 38, 0.1);
+            border: 1px solid rgba(220, 38, 38, 0.3);
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        
+        .section-title {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 15px 0 10px 0;
+        }
+        
+        /* Vulnerability item */
+        .vuln-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--error);
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-bottom: 12px;
+        }
+        
+        .vuln-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        
+        .vuln-id {
+            font-weight: 700;
+            font-size: 14px;
+            color: #fca5a5;
+        }
+        
+        .sev-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        
+        .sev-critical { background-color: #ef4444; color: white; }
+        .sev-high { background-color: #f97316; color: white; }
+        .sev-medium { background-color: #eab308; color: black; }
+        .sev-low { background-color: #0ea5e9; color: white; }
+        .sev-unknown { background-color: #374151; color: white; }
+        
+        .vuln-summary {
+            font-size: 13.5px;
+            color: var(--text-main);
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+        
+        .vuln-details {
+            font-family: monospace;
+            font-size: 11px;
+            background-color: var(--bg-color);
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            overflow-x: auto;
+            color: var(--text-muted);
+            margin: 0;
+            white-space: pre-wrap;
+        }
+        
+        /* Suppressed item */
+        .suppressed-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--muted);
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-bottom: 12px;
+        }
+        
+        .suppressed-item .vuln-id {
+            color: var(--text-muted);
+        }
+        
+        .suppressed-label {
+            font-size: 10px;
+            font-weight: 700;
+            background-color: var(--muted);
+            color: var(--text-main);
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+        
+        .suppressed-reason {
+            font-size: 12.5px;
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-top: 8px;
+            color: #94a3b8;
+        }
+        
+        /* Notes & Warnings inline section */
+        .notes-warnings-section {
+            background-color: rgba(245, 158, 11, 0.05);
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            border-left: 4px solid var(--warning);
+            border-radius: 8px;
+            padding: 12px 15px;
+            margin-bottom: 15px;
+        }
+        
+        .section-title-inline {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--warning);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .section-title-inline svg {
+            stroke: var(--warning);
+            fill: none;
+        }
+        
+        .notes-warnings-body {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .note-warning-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 13px;
+            line-height: 1.45;
+            color: var(--text-main);
+        }
+        
+        .note-warning-icon {
+            flex-shrink: 0;
+            font-size: 14px;
+        }
+        
+        /* Changelog & Migration buttons */
+        .changelog-btn {
+            display: inline-flex;
+            align-items: center;
+            background-color: var(--border-color);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            text-decoration: none;
+            margin-right: 8px;
+            transition: all 0.2s ease;
+        }
+        .changelog-btn:hover {
+            background-color: var(--primary);
+            color: #0b0f19;
+            border-color: var(--primary);
+        }
+
+        /* Modal backdrop */
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+            transition: opacity 0.3s ease;
+        }
+        
+        /* Modal box */
+        .remediation-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.9);
+            width: 90%;
+            max-width: 950px;
+            max-height: 85vh;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            z-index: 1001;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+            opacity: 0;
+        }
+        
+        .remediation-modal.active, .modal-backdrop.active {
+            display: block;
+            opacity: 1;
+        }
+        
+        .remediation-modal.active {
+            transform: translate(-50%, -50%) scale(1);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #161e2e;
+        }
+        
+        .modal-header h3 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+        }
+        
+        .modal-close:hover {
+            color: var(--text-main);
+        }
+        
+        .modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+        
+        .modal-info-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background-color: #1e293b;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 16px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 20px;
+            color: #e2e8f0;
+        }
+        
+        .modal-diff-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .modal-diff-container {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .diff-box {
+            background-color: #0b0f19;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .diff-box-title {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background-color: #111827;
+        }
+        
+        .diff-box-title.current {
+            color: var(--error);
+            border-left: 3px solid var(--error);
+        }
+        
+        .diff-box-title.suggested {
+            color: var(--success);
+            border-left: 3px solid var(--success);
+        }
+        
+        .diff-code {
+            padding: 16px;
+            margin: 0;
+            font-family: 'Consolas', 'Courier New', Courier, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-x: auto;
+            white-space: pre;
+        }
+        
+        .diff-line {
+            display: flex;
+            width: 100%;
+        }
+        
+        .diff-line-num {
+            width: 45px;
+            text-align: right;
+            padding-right: 12px;
+            color: var(--text-muted);
+            user-select: none;
+            border-right: 1px solid var(--border-color);
+            margin-right: 12px;
+            font-size: 11px;
+        }
+        
+        .diff-line-content {
+            flex-grow: 1;
+        }
+        
+        .diff-line.removed {
+            background-color: rgba(239, 68, 68, 0.15);
+        }
+        
+        .diff-line.added {
+            background-color: rgba(16, 185, 129, 0.15);
+        }
+        
+        .diff-remove-chunk {
+            background-color: rgba(239, 68, 68, 0.4);
+            text-decoration: line-through;
+            padding: 1px 3px;
+            border-radius: 3px;
+        }
+        
+        .diff-add-chunk {
+            background-color: rgba(16, 185, 129, 0.4);
+            padding: 1px 3px;
+            border-radius: 3px;
+        }
+        
+        .btn-remediation {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 8px 16px;
+            font-size: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: filter 0.2s ease;
+        }
+        
+        .btn-remediation:hover {
+            filter: brightness(1.1);
+        }
+        
+        .btn-ai-prompt {
+            background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 8px 16px;
+            font-size: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: filter 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        .btn-ai-prompt:hover {
+            filter: brightness(1.15);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Kevlar CheckDeps <span style="font-size: 13px; font-weight: normal; color: var(--text-muted); margin-left: 6px;">v${VERSION}</span></h1>
+                <div style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Dependency Status & Security Audit</div>
+                <div style="font-size: 12px; margin-top: 6px;"><a href="https://github.com/brunoevn/kevlar-checkdeps" target="_blank" style="color: var(--primary); text-decoration: none;">https://github.com/brunoevn/kevlar-checkdeps</a></div>
+            </div>
+            <div class="meta-info">
+                <div>Report Generated: <strong>${scan_date}</strong></div>
+                <div>Ecosystem: <strong>${project_title}</strong></div>
+                ${project_path_header_html}
+            </div>
+        </header>
+        
+        <div class="dashboard-grid">
+            <!-- Stats -->
+            <div class="stats-grid">
+                <div class="stat-card primary-large">
+                    <div class="stat-val">${total}</div>
+                    <div class="stat-lbl">Checked</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-val">${outdated}</div>
+                    <div class="stat-lbl">Outdated</div>
+                </div>
+                <div class="stat-card error">
+                    <div class="stat-val">${total_vulns}</div>
+                    <div class="stat-lbl">Vulnerable</div>
+                </div>
+                <div class="stat-card depr">
+                    <div class="stat-val">${deprecated}</div>
+                    <div class="stat-lbl">Deprecated</div>
+                </div>
+                <div class="stat-card muted">
+                    <div class="stat-val">${suppressed_vulns}</div>
+                    <div class="stat-lbl">Suppressed</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-val">${up_to_date}</div>
+                    <div class="stat-lbl">Up-to-date</div>
+                </div>
+                <div class="stat-card error" style="background-color: rgba(239, 68, 68, 0.05);">
+                    <div class="stat-val">${errors}</div>
+                    <div class="stat-lbl">Errors</div>
+                </div>
+            </div>
+            
+            <!-- SVG Bar Chart -->
+            <div>
+                ${svg_chart}
+            </div>
+        </div>
+        
+        <!-- Controls -->
+        <div class="controls-placeholder">
+            <div class="controls-toolbar">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search packages..." oninput="onSearchInput()">
+                <button id="clearSearch" onclick="clearSearchInput()">&times;</button>
+            </div>
+            <div class="filter-buttons">
+                <button class="filter-btn active" data-cat="all" onclick="setCategory('all', event)">All</button>
+                
+                <div class="filter-group">
+                    <button class="filter-btn" data-cat="vulnerable" onclick="setCategory('vulnerable', event)">
+                        Vulnerable <span class="chevron-inline">▼</span>
+                    </button>
+                    <div class="filter-dropdown" id="dropdown-vulnerable">
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="critical" checked onchange="filterPackages()"> <span class="dot crit-dot"></span> Critical</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'critical')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="high" checked onchange="filterPackages()"> <span class="dot high-dot"></span> High</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'high')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="medium" checked onchange="filterPackages()"> <span class="dot med-dot"></span> Medium</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'medium')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="low" checked onchange="filterPackages()"> <span class="dot low-dot"></span> Low</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'low')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="unknown" checked onchange="filterPackages()"> <span class="dot unkn-dot"></span> Unknown</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'unknown')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <button class="filter-btn" data-cat="outdated" onclick="setCategory('outdated', event)">
+                        Outdated <span class="chevron-inline">▼</span>
+                    </button>
+                    <div class="filter-dropdown" id="dropdown-outdated">
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="major" checked onchange="filterPackages()"> Major Update</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'major')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="minor" checked onchange="filterPackages()"> Minor Update</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'minor')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="patch" checked onchange="filterPackages()"> Patch Update</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'patch')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <button class="filter-btn" data-cat="scope" onclick="setCategory('scope', event)">
+                        Scope <span class="chevron-inline">▼</span>
+                    </button>
+                    <div class="filter-dropdown" id="dropdown-scope">
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="direct" checked onchange="filterPackages()"> Direct</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'direct')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="dev" checked onchange="filterPackages()"> Dev</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'dev')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="transitive" checked onchange="filterPackages()"> Transitive</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'transitive')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                        <div class="dropdown-row">
+                            <label><input type="checkbox" value="engine" checked onchange="filterPackages()"> Engine</label>
+                            <span class="row-actions">
+                                <span class="action-btn" onclick="selectOnly(event, 'engine')">only</span>
+                                <span class="action-separator">/</span>
+                                <span class="action-btn" onclick="selectAll(event)">all</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <button class="filter-btn" data-cat="deprecated" onclick="setCategory('deprecated', event)">Deprecated</button>
+                <button class="filter-btn" data-cat="suppressed" onclick="setCategory('suppressed', event)">Suppressed</button>
+                <button class="filter-btn" data-cat="clean" onclick="setCategory('clean', event)">Clean</button>
+            </div>
+        </div>
+    </div>
+        
+        <!-- Packages List -->
+        <div class="packages-list">
+            ${package_cards}
+        </div>
+    </div>
+    
+    <script>
+        // Floating toolbar logic on scroll
+        document.addEventListener('DOMContentLoaded', () => {
+            const toolbar = document.querySelector('.controls-toolbar');
+            const placeholder = document.querySelector('.controls-placeholder');
+            const pkgList = document.querySelector('.packages-list');
+            
+            function updatePlaceholderHeight() {
+                if (placeholder && toolbar && !toolbar.classList.contains('floating')) {
+                    placeholder.style.height = toolbar.offsetHeight + 'px';
+                }
+            }
+            
+            // Set initial height
+            updatePlaceholderHeight();
+            window.addEventListener('resize', updatePlaceholderHeight);
+            
+            // Observe changes in toolbar height (e.g. wrap on screen resize)
+            if (window.ResizeObserver) {
+                const ro = new ResizeObserver(() => {
+                    updatePlaceholderHeight();
+                });
+                ro.observe(toolbar);
+            }
+            
+            window.addEventListener('scroll', () => {
+                if (!toolbar || !placeholder) return;
+                
+                const placeholderRect = placeholder.getBoundingClientRect();
+                
+                if (placeholderRect.top < 20) {
+                    toolbar.classList.add('floating');
+                    pkgList.classList.add('floating-active');
+                } else {
+                    toolbar.classList.remove('floating');
+                    pkgList.classList.remove('floating-active');
+                }
+            });
+        });
+
+        let activeCategories = ['all'];
+        
+        function selectOnly(event, value) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropdown = event.target.closest('.filter-dropdown');
+            if (dropdown) {
+                dropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = (cb.value === value);
+                });
+                filterPackages();
+            }
+        }
+        
+        function selectAll(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropdown = event.target.closest('.filter-dropdown');
+            if (dropdown) {
+                dropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.checked = true;
+                });
+                filterPackages();
+            }
+        }
+        
+        function setCategory(cat, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            
+            if (cat === 'all') {
+                activeCategories = ['all'];
+                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
+                document.querySelectorAll('.filter-dropdown input[type="checkbox"]').forEach(cb => {
+                    cb.checked = true;
+                });
+            } else if (cat === 'clean') {
+                activeCategories = ['clean'];
+                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
+                document.querySelectorAll('.filter-dropdown input[type="checkbox"]').forEach(cb => {
+                    cb.checked = true;
+                });
+            } else {
+                activeCategories = activeCategories.filter(c => c !== 'all' && c !== 'clean');
+                
+                if (activeCategories.includes(cat)) {
+                    activeCategories = activeCategories.filter(c => c !== cat);
+                    const dd = document.getElementById(`dropdown-$${cat}`);
+                    if (dd) {
+                        dd.classList.remove('show');
+                        const group = dd.closest('.filter-group');
+                        if (group) {
+                            const btn = group.querySelector('.filter-btn');
+                            if (btn) btn.classList.remove('dropdown-open');
+                        }
+                    }
+                } else {
+                    activeCategories.push(cat);
+                    document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
+                    document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
+                    
+                    const dd = document.getElementById(`dropdown-$${cat}`);
+                    if (dd) {
+                        dd.classList.add('show');
+                        const group = dd.closest('.filter-group');
+                        if (group) {
+                            const btn = group.querySelector('.filter-btn');
+                            if (btn) btn.classList.add('dropdown-open');
+                        }
+                    }
+                }
+                
+                if (activeCategories.length === 0) {
+                    activeCategories = ['all'];
+                }
+            }
+            
+            updateFilterButtonStates();
+            filterPackages();
+        }
+        
+        function updateFilterButtonStates() {
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                const cat = btn.getAttribute('data-cat');
+                if (activeCategories.includes(cat)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
+        
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.filter-group')) {
+                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
+            }
+        });
+        
+        function onSearchInput() {
+            const input = document.getElementById('searchInput');
+            const clearBtn = document.getElementById('clearSearch');
+            if (input.value) {
+                clearBtn.style.display = 'block';
+            } else {
+                clearBtn.style.display = 'none';
+            }
+            filterPackages();
+        }
+        
+        function clearSearchInput() {
+            const input = document.getElementById('searchInput');
+            input.value = '';
+            document.getElementById('clearSearch').style.display = 'none';
+            filterPackages();
+            input.focus();
+        }
+        
+        function filterPackages() {
+            const searchVal = document.getElementById('searchInput').value.toLowerCase();
+            const cards = document.querySelectorAll('.package-card');
+            
+            const checkedSeverities = Array.from(document.querySelectorAll('#dropdown-vulnerable input[type="checkbox"]:checked')).map(cb => cb.value);
+            const checkedOutdated = Array.from(document.querySelectorAll('#dropdown-outdated input[type="checkbox"]:checked')).map(cb => cb.value);
+            const checkedScopes = Array.from(document.querySelectorAll('#dropdown-scope input[type="checkbox"]:checked')).map(cb => cb.value);
+            
+            cards.forEach(card => {
+                const name = card.getAttribute('data-name').toLowerCase();
+                const status = card.getAttribute('data-status');
+                const isVulnerable = card.getAttribute('data-vulnerable') === 'true';
+                const cardSeverities = (card.getAttribute('data-severities') || '').split(',').filter(s => s);
+                const isSuppressed = card.getAttribute('data-suppressed') === 'true';
+                const isDeprecated = card.getAttribute('data-deprecated') === 'true';
+                const depType = card.getAttribute('data-deptype');
+                
+                let matchesCategory = false;
+                if (activeCategories.includes('all')) {
+                    matchesCategory = true;
+                } else {
+                    let matchesAll = true;
+                    for (const cat of activeCategories) {
+                        if (cat === 'vulnerable') {
+                            const checkSeverities = cardSeverities.length > 0 ? cardSeverities : ['unknown'];
+                            if (!(isVulnerable && checkSeverities.some(s => checkedSeverities.includes(s)))) {
+                                matchesAll = false;
+                                break;
+                            }
+                        } else if (cat === 'outdated') {
+                            if (!(checkedOutdated.includes(status) || (checkedOutdated.includes('major') && isDeprecated))) {
+                                matchesAll = false;
+                                break;
+                            }
+                        } else if (cat === 'scope') {
+                            if (!checkedScopes.includes(depType)) {
+                                matchesAll = false;
+                                break;
+                            }
+                        } else if (cat === 'deprecated') {
+                            if (!isDeprecated) {
+                                matchesAll = false;
+                                break;
+                            }
+                        } else if (cat === 'suppressed') {
+                            if (!isSuppressed) {
+                                matchesAll = false;
+                                break;
+                            }
+                        } else if (cat === 'clean') {
+                            if (!(status === 'up-to-date' && !isVulnerable && !isDeprecated)) {
+                                matchesAll = false;
+                                break;
+                            }
+                        }
+                    }
+                    matchesCategory = matchesAll;
+                }
+                
+                const matchesSearch = name.includes(searchVal);
+                
+                if (matchesCategory && matchesSearch) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+        
+        function toggleDetails(idx) {
+            const detailEl = document.getElementById('detail-' + idx);
+            const chevronEl = document.getElementById('chevron-' + idx);
+            if (detailEl.style.display === 'none' || !detailEl.style.display) {
+                detailEl.style.display = 'block';
+                chevronEl.style.transform = 'rotate(180deg)';
+            } else {
+                detailEl.style.display = 'none';
+                chevronEl.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        function escapeHtml(text) {
+            if (typeof text !== 'string') return '';
+            return text.replace(/&/g, '&amp;')
+                       .replace(/</g, '&lt;')
+                       .replace(/>/g, '&gt;')
+                       .replace(/"/g, '&quot;')
+                       .replace(/'/g, '&#039;');
+        }
+        
+        function openRemediationModal(btn) {
+            const dataStr = btn.getAttribute('data-remediation');
+            if (!dataStr) return;
+            
+            const info = JSON.parse(dataStr);
+            
+            document.getElementById('modal-filepath').textContent = info.display_path || (info.manifest_path + ':' + info.line_number);
+            
+            const currentContainer = document.getElementById('modal-current-code');
+            currentContainer.innerHTML = '';
+            info.current_code.forEach(line => {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'diff-line' + (line.is_changed ? ' removed' : '');
+                
+                const numSpan = document.createElement('span');
+                numSpan.className = 'diff-line-num';
+                numSpan.textContent = line.line_num;
+                
+                const contentSpan = document.createElement('span');
+                contentSpan.className = 'diff-line-content';
+                contentSpan.innerHTML = line.html;
+                
+                lineDiv.appendChild(numSpan);
+                lineDiv.appendChild(contentSpan);
+                currentContainer.appendChild(lineDiv);
+            });
+            
+            const suggestedContainer = document.getElementById('modal-suggested-code');
+            suggestedContainer.innerHTML = '';
+            info.suggested_code.forEach(line => {
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'diff-line' + (line.is_changed ? ' added' : '');
+                
+                const numSpan = document.createElement('span');
+                numSpan.className = 'diff-line-num';
+                numSpan.textContent = line.line_num;
+                
+                const contentSpan = document.createElement('span');
+                contentSpan.className = 'diff-line-content';
+                contentSpan.innerHTML = line.html;
+                
+                lineDiv.appendChild(numSpan);
+                lineDiv.appendChild(contentSpan);
+                suggestedContainer.appendChild(lineDiv);
+            });
+            
+            document.getElementById('remediation-modal').style.display = 'flex';
+            document.getElementById('modal-backdrop').style.display = 'block';
+            
+            setTimeout(() => {
+                document.getElementById('remediation-modal').classList.add('active');
+                document.getElementById('modal-backdrop').classList.add('active');
+            }, 10);
+        }
+        
+        function closeRemediationModal() {
+            const modal = document.getElementById('remediation-modal');
+            const backdrop = document.getElementById('modal-backdrop');
+            
+            modal.classList.remove('active');
+            backdrop.classList.remove('active');
+            
+            setTimeout(() => {
+                modal.style.display = 'none';
+                backdrop.style.display = 'none';
+            }, 300);
+        }
+        
+        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy) {
+            if (window.event) {
+                window.event.stopPropagation();
+            }
+            
+            let targetText = latestAbsolute;
+            let tasksIntro = `I want to update this package to version "$${latestAbsolute}". Please perform the following tasks in a detailed and professional manner:`;
+            
+            if (latestSameMajor && latestAbsolute && latestSameMajor !== latestAbsolute) {
+                if (latestSameMajor === currentVer) {
+                    targetText = latestAbsolute;
+                    tasksIntro = `I want to update this package to version "$${targetText}". Please perform the following tasks in a detailed and professional manner:`;
+                } else {
+                    targetText = `$${latestSameMajor} or $${latestAbsolute}`;
+                    tasksIntro = `I want to update this package to version "$${targetText}". Please perform the following tasks in a detailed and professional manner (taking into account the minor update to "$${latestSameMajor}" vs the major update to "$${latestAbsolute}" in your analysis):`;
+                }
+            } else if (latestSameMajor && latestSameMajor !== currentVer) {
+                targetText = latestSameMajor;
+                tasksIntro = `I want to update this package to version "$${targetText}". Please perform the following tasks in a detailed and professional manner:`;
+            }
+            
+            let pkgDesc = `the package "$${pkgName}"`;
+            if (depType === 'Transitive' && requiredBy) {
+                pkgDesc = `the transitive dependency package "$${pkgName}" (which is required by $${requiredBy})`;
+            }
+            
+            let projectContext = "";
+            if (projName && projDir) {
+                projectContext = ` (name: $${projName} directory: $${projDir})`;
+            }
+            
+            const promptTexto = `Act as a Senior AppSec Expert and Principal Software Engineer specialized in the $${ecosystem} ecosystem.
+
+I have $${pkgDesc} in my project$${projectContext}, which is currently on version "$${currentVer}".
+An alert of type "$${alertType}" has been detected.
+Detailed information/Associated alerts:
+$${details}
+
+$${tasksIntro}
+
+1. Critically analyze any potential 'Breaking Changes' or destructive impacts when upgrading from version "$${currentVer}" to "$${targetText}".
+2. Verify if the target version "$${targetText}" safely resolves the issues and vulnerabilities described in the details above.
+3. Provide a step-by-step action plan with the exact console commands to perform the upgrade or mitigate risks if there are disruptive changes or incompatibilities.
+4. Check if any other libraries or transitive dependencies will become obsolete, unused, or orphaned as a result of this upgrade, and suggest how to safely clean them up (e.g., pruning unused packages).`;
+
+            navigator.clipboard.writeText(promptTexto).then(() => {
+                let btn = null;
+                if (window.event) {
+                    btn = window.event.currentTarget || window.event.target;
+                }
+                if (!btn || btn.tagName !== 'BUTTON') {
+                    btn = document.activeElement;
+                }
+                if (btn && btn.tagName !== 'BUTTON') {
+                    btn = btn.closest('button');
+                }
+                if (btn) {
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = "Copied!";
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                    }, 2000);
+                }
+            }).catch(err => {
+                console.error('Failed to copy text to clipboard: ', err);
+                alert('Failed to copy to clipboard. Please check browser permissions.');
+            });
+        }
+    </script>
+    
+    <!-- Remediation Modal -->
+    <div id="modal-backdrop" class="modal-backdrop" onclick="closeRemediationModal()"></div>
+    <div id="remediation-modal" class="remediation-modal">
+        <div class="modal-header">
+            <h3>Remediation Recommendation</h3>
+            <button class="modal-close" onclick="closeRemediationModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Declaration Location</div>
+            <div class="modal-info-bar">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary); flex-shrink: 0; margin-right: 4px;">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                </svg>
+                <span id="modal-filepath"></span>
+            </div>
+            
+            <div class="modal-diff-container">
+                <div class="diff-box">
+                    <div class="diff-box-title current">Current Code</div>
+                    <pre class="diff-code" id="modal-current-code"></pre>
+                </div>
+                <div class="diff-box">
+                    <div class="diff-box-title suggested">Suggested Change</div>
+                    <pre class="diff-code" id="modal-suggested-code"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
 def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     """Exports results as a rich, interactive HTML dashboard report."""
     def escape_js_string(s):
@@ -6083,1562 +7645,31 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             """)
 
         # HTML Master Template
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dependency Status & Security Report</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        :root {{
-            --bg-color: #0b0f19;
-            --card-bg: #111827;
-            --card-hover: #1f2937;
-            --text-main: #f9fafb;
-            --text-muted: #9ca3af;
-            --border-color: #374151;
-            --primary: #38bdf8;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --error: #ef4444;
-            --info: #0ea5e9;
-            --depr: #a855f7;
-            --muted: #4b5563;
-        }}
-        
-        body {{
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
-            padding: 40px 20px;
-            display: flex;
-            justify-content: center;
-        }}
-        
-        .container {{
-            max-width: 1000px;
-            width: 100%;
-        }}
-        
-        header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 20px;
-        }}
-        
-        h1 {{
-            margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-            background: linear-gradient(135deg, #38bdf8 0%, #3b82f6 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
-        
-        .meta-info {{
-            font-size: 13px;
-            color: var(--text-muted);
-            text-align: right;
-        }}
-        
-        /* Grid Dashboard */
-        .dashboard-grid {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 30px;
-        }}
-        
-        .stats-grid {{
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 15px;
-        }}
-        
-        @media (max-width: 768px) {{
-            .dashboard-grid {{
-                grid-template-columns: 1fr;
-            }}
-            .stats-grid {{
-                grid-template-columns: repeat(2, 1fr);
-            }}
-        }}
-        
-        .stat-card {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 15px;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }}
-        
-        .stat-card.primary-large {{
-            grid-column: span 2;
-        }}
-        
-        .stat-val {{
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }}
-        
-        .stat-lbl {{
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-        
-        .stat-card.primary .stat-val, .stat-card.primary-large .stat-val {{ color: var(--primary); }}
-        .stat-card.warning .stat-val {{ color: var(--warning); }}
-        .stat-card.error .stat-val {{ color: var(--error); }}
-        .stat-card.success .stat-val {{ color: var(--success); }}
-        .stat-card.muted .stat-val {{ color: var(--text-muted); }}
-        .stat-card.depr .stat-val {{ color: var(--depr); }}
-        
-        /* Controls Toolbar */
-        .controls-toolbar {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-            gap: 15px;
-            flex-wrap: wrap;
-        }}
-        
-        /* Floating controls-toolbar styles on scroll */
-        .controls-placeholder {{
-            display: block;
-            margin-bottom: 25px;
-        }}
-        
-        @media (min-width: 768px) {{
-            .controls-toolbar.floating {{
-                position: fixed;
-                top: 0;
-                left: 50%;
-                transform: translate(-50%, 0);
-                width: 100%;
-                max-width: 1000px;
-                border-radius: 0 0 12px 12px;
-                border-left: 1px solid var(--border-color);
-                border-right: 1px solid var(--border-color);
-                border-top: none;
-                border-bottom: 1px solid var(--border-color);
-                background-color: rgba(17, 24, 39, 0.95);
-                backdrop-filter: blur(10px);
-                z-index: 1000;
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-                padding: 10px 20px;
-                box-sizing: border-box;
-                animation: desktopStickyIn 0.2s ease;
-            }}
-        }}
-        
-        /* Mobile Sticky fallback */
-        @media (max-width: 767px) {{
-            .controls-toolbar.floating {{
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                border-radius: 0;
-                border-left: 0;
-                border-right: 0;
-                border-top: 0;
-                background-color: rgba(17, 24, 39, 0.95);
-                backdrop-filter: blur(10px);
-                z-index: 1000;
-                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-                padding: 10px 15px;
-                margin-bottom: 0;
-                box-sizing: border-box;
-                animation: mobileStickyIn 0.2s ease;
-            }}
-            
-            .controls-toolbar.floating .search-box {{
-                max-width: none;
-                width: 100%;
-            }}
-        }}
-        
-        @keyframes desktopStickyIn {{
-            from {{
-                transform: translate(-50%, -100%);
-            }}
-            to {{
-                transform: translate(-50%, 0);
-            }}
-        }}
-        
-        @keyframes mobileStickyIn {{
-            from {{
-                transform: translateY(-100%);
-            }}
-            to {{
-                transform: translateY(0);
-            }}
-        }}
-        
-        .search-box {{
-            flex-grow: 1;
-            position: relative;
-            max-width: 400px;
-            min-width: 200px;
-        }}
-        
-        .search-box input {{
-            width: 100%;
-            background-color: var(--bg-color);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-main);
-            padding: 10px 35px 10px 12px;
-            font-size: 14px;
-            box-sizing: border-box;
-            font-family: inherit;
-        }}
-        
-        .search-box input:focus {{
-            outline: none;
-            border-color: var(--primary);
-        }}
-        
-        #clearSearch {{
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-size: 18px;
-            cursor: pointer;
-            padding: 0;
-            line-height: 1;
-            display: none;
-            font-family: sans-serif;
-        }}
-        
-        #clearSearch:hover {{
-            color: var(--text-main);
-        }}
-        
-        .filter-buttons {{
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            align-items: center;
-        }}
-        
-        .filter-group {{
-            position: relative;
-            display: inline-block;
-        }}
-        
-        .chevron-inline {{
-            display: inline-block;
-            font-size: 8px;
-            margin-left: 6px;
-            opacity: 0.7;
-            transition: transform 0.2s ease;
-        }}
-        
-        .filter-btn.dropdown-open .chevron-inline {{
-            transform: rotate(180deg);
-        }}
-        
-        .filter-dropdown {{
-            position: absolute;
-            top: calc(100% + 6px);
-            left: 0;
-            z-index: 100;
-            background: rgba(17, 24, 39, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 12px;
-            min-width: 200px;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.5);
-            display: none;
-        }}
-        
-        .dropdown-row {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            width: 100%;
-        }}
-        
-        .row-actions {{
-            display: inline-flex;
-            align-items: center;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.15s ease;
-            user-select: none;
-        }}
-        
-        .dropdown-row:hover .row-actions {{
-            opacity: 1;
-            pointer-events: auto;
-        }}
-        
-        .action-btn {{
-            font-size: 10px;
-            color: var(--primary);
-            cursor: pointer;
-            text-decoration: underline;
-            font-weight: 500;
-        }}
-        
-        .action-btn:hover {{
-            color: var(--text-main);
-        }}
-        
-        .action-separator {{
-            font-size: 10px;
-            color: var(--text-muted);
-            margin: 0 3px;
-        }}
-        
-        @keyframes fadeInSlide {{
-            from {{
-                opacity: 0;
-                transform: translateY(-8px);
-            }}
-            to {{
-                opacity: 1;
-                transform: translateY(0);
-            }}
-        }}
-        
-        .filter-dropdown.show {{
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            animation: fadeInSlide 0.15s ease-out forwards;
-        }}
-        
-        .filter-dropdown label {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 13px;
-            color: var(--text-main);
-            cursor: pointer;
-            user-select: none;
-            transition: opacity 0.15s;
-        }}
-        
-        .filter-dropdown label:hover {{
-            opacity: 0.85;
-        }}
-        
-        .filter-dropdown input[type="checkbox"] {{
-            accent-color: var(--primary);
-            cursor: pointer;
-            width: 14px;
-            height: 14px;
-        }}
-        
-        .dot {{
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-        }}
-        .crit-dot {{ background-color: var(--error); }}
-        .high-dot {{ background-color: #f97316; }}
-        .med-dot {{ background-color: var(--warning); }}
-        .low-dot {{ background-color: var(--info); }}
-        .unkn-dot {{ background-color: var(--text-muted); }}
-        
-        .filter-btn {{
-            background-color: var(--bg-color);
-            border: 1px solid var(--border-color);
-            color: var(--text-muted);
-            border-radius: 8px;
-            padding: 8px 14px;
-            font-size: 13px;
-            cursor: pointer;
-            font-family: inherit;
-            transition: all 0.2s ease;
-            display: inline-flex;
-            align-items: center;
-        }}
-        
-        .filter-btn:hover {{
-            background-color: var(--card-hover);
-            color: var(--text-main);
-        }}
-        
-        .filter-btn.active {{
-            background: linear-gradient(135deg, #38bdf8 0%, #3b82f6 100%);
-            border-color: var(--primary);
-            color: white;
-            font-weight: 600;
-        }}
-        
-        /* Packages list */
-        .packages-list {{
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }}
-        
-        .package-card {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            overflow: hidden;
-            transition: border-color 0.2s ease;
-        }}
-        
-        .package-card:hover {{
-            border-color: var(--muted);
-        }}
-        
-        .card-header {{
-            padding: 18px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            gap: 20px;
-        }}
-        
-        .card-header:hover {{
-            background-color: #161e2e;
-        }}
-        
-        .header-left {{
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }}
-        
-        .pkg-title {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }}
-        
-        .pkg-name {{
-            font-weight: 700;
-            font-size: 16px;
-        }}
-        
-        .pkg-type-badge {{
-            font-size: 10px;
-            background-color: #1e293b;
-            color: var(--text-muted);
-            padding: 2px 6px;
-            border-radius: 4px;
-            text-transform: uppercase;
-        }}
-        
-        .pkg-badges {{
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }}
-        
-        .badge {{
-            font-size: 11px;
-            padding: 2px 8px;
-            border-radius: 6px;
-            font-weight: 600;
-        }}
-        
-        .badge-success {{ background-color: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }}
-        .badge-warning {{ background-color: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }}
-        .badge-error {{ background-color: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }}
-        .badge-info {{ background-color: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3); }}
-        .badge-depr {{ background-color: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }}
-        .badge-danger {{ background-color: rgba(220, 38, 38, 0.25); color: #fca5a5; border: 1px solid rgba(220, 38, 38, 0.4); }}
-        .badge-muted {{ background-color: rgba(100, 116, 139, 0.15); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }}
-        .badge-project {{ background-color: rgba(55, 65, 81, 0.4); color: #9ca3af; border: 1px solid rgba(75, 85, 99, 0.4); }}
-        
-        .header-right {{
-            display: flex;
-            align-items: center;
-            gap: 25px;
-        }}
-        
-        .pkg-versions {{
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            font-size: 13px;
-            text-align: right;
-        }}
-        
-        .pkg-versions .label {{
-            color: var(--text-muted);
-            font-size: 11px;
-        }}
-        
-        .chevron {{
-            color: var(--text-muted);
-            transition: transform 0.2s ease;
-        }}
-        
-        /* Details Expanded */
-        .card-details {{
-            display: none;
-            padding: 20px;
-            background-color: #0d131f;
-            border-top: 1px solid var(--border-color);
-        }}
-        
-        .required-by-section {{
-            font-size: 12px;
-            color: var(--text-muted);
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            display: inline-block;
-        }}
-        
-        .error-section {{
-            color: #f87171;
-            font-size: 13px;
-            background-color: rgba(220, 38, 38, 0.1);
-            border: 1px solid rgba(220, 38, 38, 0.3);
-            padding: 10px 14px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-        }}
-        
-        .section-title {{
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin: 15px 0 10px 0;
-        }}
-        
-        /* Vulnerability item */
-        .vuln-item {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-left: 3px solid var(--error);
-            border-radius: 8px;
-            padding: 12px 15px;
-            margin-bottom: 12px;
-        }}
-        
-        .vuln-header {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 6px;
-        }}
-        
-        .vuln-id {{
-            font-weight: 700;
-            font-size: 14px;
-            color: #fca5a5;
-        }}
-        
-        .sev-badge {{
-            font-size: 10px;
-            font-weight: 700;
-            padding: 2px 6px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            display: inline-block;
-        }}
-        
-        .sev-critical {{ background-color: #ef4444; color: white; }}
-        .sev-high {{ background-color: #f97316; color: white; }}
-        .sev-medium {{ background-color: #eab308; color: black; }}
-        .sev-low {{ background-color: #0ea5e9; color: white; }}
-        .sev-unknown {{ background-color: #374151; color: white; }}
-        
-        .vuln-summary {{
-            font-size: 13.5px;
-            color: var(--text-main);
-            margin-bottom: 8px;
-            line-height: 1.4;
-        }}
-        
-        .vuln-details {{
-            font-family: monospace;
-            font-size: 11px;
-            background-color: var(--bg-color);
-            padding: 10px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            overflow-x: auto;
-            color: var(--text-muted);
-            margin: 0;
-            white-space: pre-wrap;
-        }}
-        
-        /* Suppressed item */
-        .suppressed-item {{
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-left: 3px solid var(--muted);
-            border-radius: 8px;
-            padding: 12px 15px;
-            margin-bottom: 12px;
-        }}
-        
-        .suppressed-item .vuln-id {{
-            color: var(--text-muted);
-        }}
-        
-        .suppressed-label {{
-            font-size: 10px;
-            font-weight: 700;
-            background-color: var(--muted);
-            color: var(--text-main);
-            padding: 2px 6px;
-            border-radius: 4px;
-            text-transform: uppercase;
-        }}
-        
-        .suppressed-reason {{
-            font-size: 12.5px;
-            background-color: var(--bg-color);
-            border: 1px solid var(--border-color);
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin-top: 8px;
-            color: #94a3b8;
-        }}
-        
-        /* Notes & Warnings inline section */
-        .notes-warnings-section {{
-            background-color: rgba(245, 158, 11, 0.05);
-            border: 1px solid rgba(245, 158, 11, 0.25);
-            border-left: 4px solid var(--warning);
-            border-radius: 8px;
-            padding: 12px 15px;
-            margin-bottom: 15px;
-        }}
-        
-        .section-title-inline {{
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--warning);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }}
-        
-        .section-title-inline svg {{
-            stroke: var(--warning);
-            fill: none;
-        }}
-        
-        .notes-warnings-body {{
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }}
-        
-        .note-warning-item {{
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-            font-size: 13px;
-            line-height: 1.45;
-            color: var(--text-main);
-        }}
-        
-        .note-warning-icon {{
-            flex-shrink: 0;
-            font-size: 14px;
-        }}
-        
-        /* Changelog & Migration buttons */
-        .changelog-btn {{
-            display: inline-flex;
-            align-items: center;
-            background-color: var(--border-color);
-            color: var(--text-main);
-            border: 1px solid var(--border-color);
-            padding: 5px 12px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            text-decoration: none;
-            margin-right: 8px;
-            transition: all 0.2s ease;
-        }}
-        .changelog-btn:hover {{
-            background-color: var(--primary);
-            color: #0b0f19;
-            border-color: var(--primary);
-        }}
+                # HTML Master Template rendering
+        template_str = HTMLReportTemplateProvider.get_template()
+        template = string.Template(template_str)
+        
+        project_title = escape_html(results[0]["name"].split(":")[0] if (results and ":" in results[0]["name"]) else "Project")
+        svg_chart_html = svg_chart if vuls_enabled else '<div style="background:#111827; border-radius:12px; border:1px solid #374151; height:220px; display:flex; align-items:center; justify-content:center; color:#9ca3af; font-size:14px;">Vulnerabilities scan disabled. Run with --vuls to enable charts.</div>'
+        
+        mapping = {
+            "VERSION": VERSION,
+            "deprecated": str(deprecated),
+            "errors": str(errors),
+            "outdated": str(outdated),
+            "project_path_header_html": project_path_header_html,
+            "suppressed_vulns": str(suppressed_vulns),
+            "total": str(total),
+            "total_vulns": str(total_vulns),
+            "up_to_date": str(up_to_date),
+            "scan_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "project_title": project_title,
+            "svg_chart": svg_chart_html,
+            "package_cards": "".join(package_cards_html)
+        }
+        
+        html_content = template.safe_substitute(mapping)
 
-        /* Modal backdrop */
-        .modal-backdrop {{
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.7);
-            z-index: 1000;
-            backdrop-filter: blur(4px);
-            transition: opacity 0.3s ease;
-        }}
-        
-        /* Modal box */
-        .remediation-modal {{
-            display: none;
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) scale(0.9);
-            width: 90%;
-            max-width: 950px;
-            max-height: 85vh;
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            z-index: 1001;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            overflow: hidden;
-            transition: transform 0.3s ease, opacity 0.3s ease;
-            opacity: 0;
-        }}
-        
-        .remediation-modal.active, .modal-backdrop.active {{
-            display: block;
-            opacity: 1;
-        }}
-        
-        .remediation-modal.active {{
-            transform: translate(-50%, -50%) scale(1);
-            display: flex;
-            flex-direction: column;
-        }}
-        
-        .modal-header {{
-            padding: 20px 24px;
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background-color: #161e2e;
-        }}
-        
-        .modal-header h3 {{
-            margin: 0;
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--primary);
-        }}
-        
-        .modal-close {{
-            background: none;
-            border: none;
-            color: var(--text-muted);
-            font-size: 24px;
-            cursor: pointer;
-            line-height: 1;
-            padding: 0;
-        }}
-        
-        .modal-close:hover {{
-            color: var(--text-main);
-        }}
-        
-        .modal-body {{
-            padding: 24px;
-            overflow-y: auto;
-            flex-grow: 1;
-        }}
-        
-        .modal-info-bar {{
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background-color: #1e293b;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 10px 16px;
-            font-family: monospace;
-            font-size: 14px;
-            margin-bottom: 20px;
-            color: #e2e8f0;
-        }}
-        
-        .modal-diff-container {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }}
-        
-        @media (max-width: 768px) {{
-            .modal-diff-container {{
-                grid-template-columns: 1fr;
-            }}
-        }}
-        
-        .diff-box {{
-            background-color: #0b0f19;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            overflow: hidden;
-        }}
-        
-        .diff-box-title {{
-            padding: 10px 16px;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            background-color: #111827;
-        }}
-        
-        .diff-box-title.current {{
-            color: var(--error);
-            border-left: 3px solid var(--error);
-        }}
-        
-        .diff-box-title.suggested {{
-            color: var(--success);
-            border-left: 3px solid var(--success);
-        }}
-        
-        .diff-code {{
-            padding: 16px;
-            margin: 0;
-            font-family: 'Consolas', 'Courier New', Courier, monospace;
-            font-size: 13px;
-            line-height: 1.5;
-            overflow-x: auto;
-            white-space: pre;
-        }}
-        
-        .diff-line {{
-            display: flex;
-            width: 100%;
-        }}
-        
-        .diff-line-num {{
-            width: 45px;
-            text-align: right;
-            padding-right: 12px;
-            color: var(--text-muted);
-            user-select: none;
-            border-right: 1px solid var(--border-color);
-            margin-right: 12px;
-            font-size: 11px;
-        }}
-        
-        .diff-line-content {{
-            flex-grow: 1;
-        }}
-        
-        .diff-line.removed {{
-            background-color: rgba(239, 68, 68, 0.15);
-        }}
-        
-        .diff-line.added {{
-            background-color: rgba(16, 185, 129, 0.15);
-        }}
-        
-        .diff-remove-chunk {{
-            background-color: rgba(239, 68, 68, 0.4);
-            text-decoration: line-through;
-            padding: 1px 3px;
-            border-radius: 3px;
-        }}
-        
-        .diff-add-chunk {{
-            background-color: rgba(16, 185, 129, 0.4);
-            padding: 1px 3px;
-            border-radius: 3px;
-        }}
-        
-        .btn-remediation {{
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            border: none;
-            color: white;
-            font-weight: 600;
-            padding: 8px 16px;
-            font-size: 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: filter 0.2s ease;
-        }}
-        
-        .btn-remediation:hover {{
-            filter: brightness(1.1);
-        }}
-        
-        .btn-ai-prompt {{
-            background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-            border: none;
-            color: white;
-            font-weight: 600;
-            padding: 8px 16px;
-            font-size: 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            transition: filter 0.2s ease;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }}
-        
-        .btn-ai-prompt:hover {{
-            filter: brightness(1.15);
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <div>
-                <h1>Kevlar CheckDeps <span style="font-size: 13px; font-weight: normal; color: var(--text-muted); margin-left: 6px;">v{VERSION}</span></h1>
-                <div style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Dependency Status & Security Audit</div>
-                <div style="font-size: 12px; margin-top: 6px;"><a href="https://github.com/brunoevn/kevlar-checkdeps" target="_blank" style="color: var(--primary); text-decoration: none;">https://github.com/brunoevn/kevlar-checkdeps</a></div>
-            </div>
-            <div class="meta-info">
-                <div>Report Generated: <strong>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</strong></div>
-                <div>Ecosystem: <strong>{results[0]["name"].split(":")[0] if ":" in results[0]["name"] else "Project"}</strong></div>
-                {project_path_header_html}
-            </div>
-        </header>
-        
-        <div class="dashboard-grid">
-            <!-- Stats -->
-            <div class="stats-grid">
-                <div class="stat-card primary-large">
-                    <div class="stat-val">{total}</div>
-                    <div class="stat-lbl">Checked</div>
-                </div>
-                <div class="stat-card warning">
-                    <div class="stat-val">{outdated}</div>
-                    <div class="stat-lbl">Outdated</div>
-                </div>
-                <div class="stat-card error">
-                    <div class="stat-val">{total_vulns}</div>
-                    <div class="stat-lbl">Vulnerable</div>
-                </div>
-                <div class="stat-card depr">
-                    <div class="stat-val">{deprecated}</div>
-                    <div class="stat-lbl">Deprecated</div>
-                </div>
-                <div class="stat-card muted">
-                    <div class="stat-val">{suppressed_vulns}</div>
-                    <div class="stat-lbl">Suppressed</div>
-                </div>
-                <div class="stat-card success">
-                    <div class="stat-val">{up_to_date}</div>
-                    <div class="stat-lbl">Up-to-date</div>
-                </div>
-                <div class="stat-card error" style="background-color: rgba(239, 68, 68, 0.05);">
-                    <div class="stat-val">{errors}</div>
-                    <div class="stat-lbl">Errors</div>
-                </div>
-            </div>
-            
-            <!-- SVG Bar Chart -->
-            <div>
-                {svg_chart if vuls_enabled else '<div style="background:#111827; border-radius:12px; border:1px solid #374151; height:220px; display:flex; align-items:center; justify-content:center; color:#9ca3af; font-size:14px;">Vulnerabilities scan disabled. Run with --vuls to enable charts.</div>'}
-            </div>
-        </div>
-        
-        <!-- Controls -->
-        <div class="controls-placeholder">
-            <div class="controls-toolbar">
-            <div class="search-box">
-                <input type="text" id="searchInput" placeholder="Search packages..." oninput="onSearchInput()">
-                <button id="clearSearch" onclick="clearSearchInput()">&times;</button>
-            </div>
-            <div class="filter-buttons">
-                <button class="filter-btn active" data-cat="all" onclick="setCategory('all', event)">All</button>
-                
-                <div class="filter-group">
-                    <button class="filter-btn" data-cat="vulnerable" onclick="setCategory('vulnerable', event)">
-                        Vulnerable <span class="chevron-inline">▼</span>
-                    </button>
-                    <div class="filter-dropdown" id="dropdown-vulnerable">
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="critical" checked onchange="filterPackages()"> <span class="dot crit-dot"></span> Critical</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'critical')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="high" checked onchange="filterPackages()"> <span class="dot high-dot"></span> High</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'high')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="medium" checked onchange="filterPackages()"> <span class="dot med-dot"></span> Medium</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'medium')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="low" checked onchange="filterPackages()"> <span class="dot low-dot"></span> Low</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'low')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="unknown" checked onchange="filterPackages()"> <span class="dot unkn-dot"></span> Unknown</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'unknown')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="filter-group">
-                    <button class="filter-btn" data-cat="outdated" onclick="setCategory('outdated', event)">
-                        Outdated <span class="chevron-inline">▼</span>
-                    </button>
-                    <div class="filter-dropdown" id="dropdown-outdated">
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="major" checked onchange="filterPackages()"> Major Update</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'major')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="minor" checked onchange="filterPackages()"> Minor Update</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'minor')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="patch" checked onchange="filterPackages()"> Patch Update</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'patch')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="filter-group">
-                    <button class="filter-btn" data-cat="scope" onclick="setCategory('scope', event)">
-                        Scope <span class="chevron-inline">▼</span>
-                    </button>
-                    <div class="filter-dropdown" id="dropdown-scope">
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="direct" checked onchange="filterPackages()"> Direct</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'direct')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="dev" checked onchange="filterPackages()"> Dev</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'dev')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="transitive" checked onchange="filterPackages()"> Transitive</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'transitive')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                        <div class="dropdown-row">
-                            <label><input type="checkbox" value="engine" checked onchange="filterPackages()"> Engine</label>
-                            <span class="row-actions">
-                                <span class="action-btn" onclick="selectOnly(event, 'engine')">only</span>
-                                <span class="action-separator">/</span>
-                                <span class="action-btn" onclick="selectAll(event)">all</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                
-                <button class="filter-btn" data-cat="deprecated" onclick="setCategory('deprecated', event)">Deprecated</button>
-                <button class="filter-btn" data-cat="suppressed" onclick="setCategory('suppressed', event)">Suppressed</button>
-                <button class="filter-btn" data-cat="clean" onclick="setCategory('clean', event)">Clean</button>
-            </div>
-        </div>
-    </div>
-        
-        <!-- Packages List -->
-        <div class="packages-list">
-            {"".join(package_cards_html)}
-        </div>
-    </div>
-    
-    <script>
-        // Floating toolbar logic on scroll
-        document.addEventListener('DOMContentLoaded', () => {{
-            const toolbar = document.querySelector('.controls-toolbar');
-            const placeholder = document.querySelector('.controls-placeholder');
-            const pkgList = document.querySelector('.packages-list');
-            
-            function updatePlaceholderHeight() {{
-                if (placeholder && toolbar && !toolbar.classList.contains('floating')) {{
-                    placeholder.style.height = toolbar.offsetHeight + 'px';
-                }}
-            }}
-            
-            // Set initial height
-            updatePlaceholderHeight();
-            window.addEventListener('resize', updatePlaceholderHeight);
-            
-            // Observe changes in toolbar height (e.g. wrap on screen resize)
-            if (window.ResizeObserver) {{
-                const ro = new ResizeObserver(() => {{
-                    updatePlaceholderHeight();
-                }});
-                ro.observe(toolbar);
-            }}
-            
-            window.addEventListener('scroll', () => {{
-                if (!toolbar || !placeholder) return;
-                
-                const placeholderRect = placeholder.getBoundingClientRect();
-                
-                if (placeholderRect.top < 20) {{
-                    toolbar.classList.add('floating');
-                    pkgList.classList.add('floating-active');
-                }} else {{
-                    toolbar.classList.remove('floating');
-                    pkgList.classList.remove('floating-active');
-                }}
-            }});
-        }});
-
-        let activeCategories = ['all'];
-        
-        function selectOnly(event, value) {{
-            event.preventDefault();
-            event.stopPropagation();
-            const dropdown = event.target.closest('.filter-dropdown');
-            if (dropdown) {{
-                dropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {{
-                    cb.checked = (cb.value === value);
-                }});
-                filterPackages();
-            }}
-        }}
-        
-        function selectAll(event) {{
-            event.preventDefault();
-            event.stopPropagation();
-            const dropdown = event.target.closest('.filter-dropdown');
-            if (dropdown) {{
-                dropdown.querySelectorAll('input[type="checkbox"]').forEach(cb => {{
-                    cb.checked = true;
-                }});
-                filterPackages();
-            }}
-        }}
-        
-        function setCategory(cat, event) {{
-            if (event) {{
-                event.stopPropagation();
-            }}
-            
-            if (cat === 'all') {{
-                activeCategories = ['all'];
-                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
-                document.querySelectorAll('.filter-dropdown input[type="checkbox"]').forEach(cb => {{
-                    cb.checked = true;
-                }});
-            }} else if (cat === 'clean') {{
-                activeCategories = ['clean'];
-                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
-                document.querySelectorAll('.filter-dropdown input[type="checkbox"]').forEach(cb => {{
-                    cb.checked = true;
-                }});
-            }} else {{
-                activeCategories = activeCategories.filter(c => c !== 'all' && c !== 'clean');
-                
-                if (activeCategories.includes(cat)) {{
-                    activeCategories = activeCategories.filter(c => c !== cat);
-                    const dd = document.getElementById(`dropdown-${{cat}}`);
-                    if (dd) {{
-                        dd.classList.remove('show');
-                        const group = dd.closest('.filter-group');
-                        if (group) {{
-                            const btn = group.querySelector('.filter-btn');
-                            if (btn) btn.classList.remove('dropdown-open');
-                        }}
-                    }}
-                }} else {{
-                    activeCategories.push(cat);
-                    document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
-                    document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
-                    
-                    const dd = document.getElementById(`dropdown-${{cat}}`);
-                    if (dd) {{
-                        dd.classList.add('show');
-                        const group = dd.closest('.filter-group');
-                        if (group) {{
-                            const btn = group.querySelector('.filter-btn');
-                            if (btn) btn.classList.add('dropdown-open');
-                        }}
-                    }}
-                }}
-                
-                if (activeCategories.length === 0) {{
-                    activeCategories = ['all'];
-                }}
-            }}
-            
-            updateFilterButtonStates();
-            filterPackages();
-        }}
-        
-        function updateFilterButtonStates() {{
-            document.querySelectorAll('.filter-btn').forEach(btn => {{
-                const cat = btn.getAttribute('data-cat');
-                if (activeCategories.includes(cat)) {{
-                    btn.classList.add('active');
-                }} else {{
-                    btn.classList.remove('active');
-                }}
-            }});
-        }}
-        
-        document.addEventListener('click', function(event) {{
-            if (!event.target.closest('.filter-group')) {{
-                document.querySelectorAll('.filter-dropdown').forEach(dd => dd.classList.remove('show'));
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('dropdown-open'));
-            }}
-        }});
-        
-        function onSearchInput() {{
-            const input = document.getElementById('searchInput');
-            const clearBtn = document.getElementById('clearSearch');
-            if (input.value) {{
-                clearBtn.style.display = 'block';
-            }} else {{
-                clearBtn.style.display = 'none';
-            }}
-            filterPackages();
-        }}
-        
-        function clearSearchInput() {{
-            const input = document.getElementById('searchInput');
-            input.value = '';
-            document.getElementById('clearSearch').style.display = 'none';
-            filterPackages();
-            input.focus();
-        }}
-        
-        function filterPackages() {{
-            const searchVal = document.getElementById('searchInput').value.toLowerCase();
-            const cards = document.querySelectorAll('.package-card');
-            
-            const checkedSeverities = Array.from(document.querySelectorAll('#dropdown-vulnerable input[type="checkbox"]:checked')).map(cb => cb.value);
-            const checkedOutdated = Array.from(document.querySelectorAll('#dropdown-outdated input[type="checkbox"]:checked')).map(cb => cb.value);
-            const checkedScopes = Array.from(document.querySelectorAll('#dropdown-scope input[type="checkbox"]:checked')).map(cb => cb.value);
-            
-            cards.forEach(card => {{
-                const name = card.getAttribute('data-name').toLowerCase();
-                const status = card.getAttribute('data-status');
-                const isVulnerable = card.getAttribute('data-vulnerable') === 'true';
-                const cardSeverities = (card.getAttribute('data-severities') || '').split(',').filter(s => s);
-                const isSuppressed = card.getAttribute('data-suppressed') === 'true';
-                const isDeprecated = card.getAttribute('data-deprecated') === 'true';
-                const depType = card.getAttribute('data-deptype');
-                
-                let matchesCategory = false;
-                if (activeCategories.includes('all')) {{
-                    matchesCategory = true;
-                }} else {{
-                    let matchesAll = true;
-                    for (const cat of activeCategories) {{
-                        if (cat === 'vulnerable') {{
-                            const checkSeverities = cardSeverities.length > 0 ? cardSeverities : ['unknown'];
-                            if (!(isVulnerable && checkSeverities.some(s => checkedSeverities.includes(s)))) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }} else if (cat === 'outdated') {{
-                            if (!(checkedOutdated.includes(status) || (checkedOutdated.includes('major') && isDeprecated))) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }} else if (cat === 'scope') {{
-                            if (!checkedScopes.includes(depType)) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }} else if (cat === 'deprecated') {{
-                            if (!isDeprecated) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }} else if (cat === 'suppressed') {{
-                            if (!isSuppressed) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }} else if (cat === 'clean') {{
-                            if (!(status === 'up-to-date' && !isVulnerable && !isDeprecated)) {{
-                                matchesAll = false;
-                                break;
-                            }}
-                        }}
-                    }}
-                    matchesCategory = matchesAll;
-                }}
-                
-                const matchesSearch = name.includes(searchVal);
-                
-                if (matchesCategory && matchesSearch) {{
-                    card.style.display = 'block';
-                }} else {{
-                    card.style.display = 'none';
-                }}
-            }});
-        }}
-        
-        function toggleDetails(idx) {{
-            const detailEl = document.getElementById('detail-' + idx);
-            const chevronEl = document.getElementById('chevron-' + idx);
-            if (detailEl.style.display === 'none' || !detailEl.style.display) {{
-                detailEl.style.display = 'block';
-                chevronEl.style.transform = 'rotate(180deg)';
-            }} else {{
-                detailEl.style.display = 'none';
-                chevronEl.style.transform = 'rotate(0deg)';
-            }}
-        }}
-
-        function escapeHtml(text) {{
-            if (typeof text !== 'string') return '';
-            return text.replace(/&/g, '&amp;')
-                       .replace(/</g, '&lt;')
-                       .replace(/>/g, '&gt;')
-                       .replace(/"/g, '&quot;')
-                       .replace(/'/g, '&#039;');
-        }}
-        
-        function openRemediationModal(btn) {{
-            const dataStr = btn.getAttribute('data-remediation');
-            if (!dataStr) return;
-            
-            const info = JSON.parse(dataStr);
-            
-            document.getElementById('modal-filepath').textContent = info.display_path || (info.manifest_path + ':' + info.line_number);
-            
-            const currentContainer = document.getElementById('modal-current-code');
-            currentContainer.innerHTML = '';
-            info.current_code.forEach(line => {{
-                const lineDiv = document.createElement('div');
-                lineDiv.className = 'diff-line' + (line.is_changed ? ' removed' : '');
-                
-                const numSpan = document.createElement('span');
-                numSpan.className = 'diff-line-num';
-                numSpan.textContent = line.line_num;
-                
-                const contentSpan = document.createElement('span');
-                contentSpan.className = 'diff-line-content';
-                contentSpan.innerHTML = line.html;
-                
-                lineDiv.appendChild(numSpan);
-                lineDiv.appendChild(contentSpan);
-                currentContainer.appendChild(lineDiv);
-            }});
-            
-            const suggestedContainer = document.getElementById('modal-suggested-code');
-            suggestedContainer.innerHTML = '';
-            info.suggested_code.forEach(line => {{
-                const lineDiv = document.createElement('div');
-                lineDiv.className = 'diff-line' + (line.is_changed ? ' added' : '');
-                
-                const numSpan = document.createElement('span');
-                numSpan.className = 'diff-line-num';
-                numSpan.textContent = line.line_num;
-                
-                const contentSpan = document.createElement('span');
-                contentSpan.className = 'diff-line-content';
-                contentSpan.innerHTML = line.html;
-                
-                lineDiv.appendChild(numSpan);
-                lineDiv.appendChild(contentSpan);
-                suggestedContainer.appendChild(lineDiv);
-            }});
-            
-            document.getElementById('remediation-modal').style.display = 'flex';
-            document.getElementById('modal-backdrop').style.display = 'block';
-            
-            setTimeout(() => {{
-                document.getElementById('remediation-modal').classList.add('active');
-                document.getElementById('modal-backdrop').classList.add('active');
-            }}, 10);
-        }}
-        
-        function closeRemediationModal() {{
-            const modal = document.getElementById('remediation-modal');
-            const backdrop = document.getElementById('modal-backdrop');
-            
-            modal.classList.remove('active');
-            backdrop.classList.remove('active');
-            
-            setTimeout(() => {{
-                modal.style.display = 'none';
-                backdrop.style.display = 'none';
-            }}, 300);
-        }}
-        
-        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy) {{
-            if (window.event) {{
-                window.event.stopPropagation();
-            }}
-            
-            let targetText = latestAbsolute;
-            let tasksIntro = `I want to update this package to version "${{latestAbsolute}}". Please perform the following tasks in a detailed and professional manner:`;
-            
-            if (latestSameMajor && latestAbsolute && latestSameMajor !== latestAbsolute) {{
-                if (latestSameMajor === currentVer) {{
-                    targetText = latestAbsolute;
-                    tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner:`;
-                }} else {{
-                    targetText = `${{latestSameMajor}} or ${{latestAbsolute}}`;
-                    tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner (taking into account the minor update to "${{latestSameMajor}}" vs the major update to "${{latestAbsolute}}" in your analysis):`;
-                }}
-            }} else if (latestSameMajor && latestSameMajor !== currentVer) {{
-                targetText = latestSameMajor;
-                tasksIntro = `I want to update this package to version "${{targetText}}". Please perform the following tasks in a detailed and professional manner:`;
-            }}
-            
-            let pkgDesc = `the package "${{pkgName}}"`;
-            if (depType === 'Transitive' && requiredBy) {{
-                pkgDesc = `the transitive dependency package "${{pkgName}}" (which is required by ${{requiredBy}})`;
-            }}
-            
-            let projectContext = "";
-            if (projName && projDir) {{
-                projectContext = ` (name: ${{projName}} directory: ${{projDir}})`;
-            }}
-            
-            const promptTexto = `Act as a Senior AppSec Expert and Principal Software Engineer specialized in the ${{ecosystem}} ecosystem.
-
-I have ${{pkgDesc}} in my project${{projectContext}}, which is currently on version "${{currentVer}}".
-An alert of type "${{alertType}}" has been detected.
-Detailed information/Associated alerts:
-${{details}}
-
-${{tasksIntro}}
-
-1. Critically analyze any potential 'Breaking Changes' or destructive impacts when upgrading from version "${{currentVer}}" to "${{targetText}}".
-2. Verify if the target version "${{targetText}}" safely resolves the issues and vulnerabilities described in the details above.
-3. Provide a step-by-step action plan with the exact console commands to perform the upgrade or mitigate risks if there are disruptive changes or incompatibilities.
-4. Check if any other libraries or transitive dependencies will become obsolete, unused, or orphaned as a result of this upgrade, and suggest how to safely clean them up (e.g., pruning unused packages).`;
-
-            navigator.clipboard.writeText(promptTexto).then(() => {{
-                let btn = null;
-                if (window.event) {{
-                    btn = window.event.currentTarget || window.event.target;
-                }}
-                if (!btn || btn.tagName !== 'BUTTON') {{
-                    btn = document.activeElement;
-                }}
-                if (btn && btn.tagName !== 'BUTTON') {{
-                    btn = btn.closest('button');
-                }}
-                if (btn) {{
-                    const originalText = btn.innerHTML;
-                    btn.innerHTML = "Copied!";
-                    setTimeout(() => {{
-                        btn.innerHTML = originalText;
-                    }}, 2000);
-                }}
-            }}).catch(err => {{
-                console.error('Failed to copy text to clipboard: ', err);
-                alert('Failed to copy to clipboard. Please check browser permissions.');
-            }});
-        }}
-    </script>
-    
-    <!-- Remediation Modal -->
-    <div id="modal-backdrop" class="modal-backdrop" onclick="closeRemediationModal()"></div>
-    <div id="remediation-modal" class="remediation-modal">
-        <div class="modal-header">
-            <h3>Remediation Recommendation</h3>
-            <button class="modal-close" onclick="closeRemediationModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Declaration Location</div>
-            <div class="modal-info-bar">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary); flex-shrink: 0; margin-right: 4px;">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-                <span id="modal-filepath"></span>
-            </div>
-            
-            <div class="modal-diff-container">
-                <div class="diff-box">
-                    <div class="diff-box-title current">Current Code</div>
-                    <pre class="diff-code" id="modal-current-code"></pre>
-                </div>
-                <div class="diff-box">
-                    <div class="diff-box-title suggested">Suggested Change</div>
-                    <pre class="diff-code" id="modal-suggested-code"></pre>
-                </div>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
-"""
         
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(html_content)
