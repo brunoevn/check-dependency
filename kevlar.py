@@ -6083,12 +6083,6 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             margin-bottom: 30px;
         }}
         
-        @media (max-width: 768px) {{
-            .dashboard-grid {{
-                grid-template-columns: 1fr;
-            }}
-        }}
-        
         .stats-grid {{
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -6096,11 +6090,11 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         }}
         
         @media (max-width: 768px) {{
+            .dashboard-grid {{
+                grid-template-columns: 1fr;
+            }}
             .stats-grid {{
                 grid-template-columns: repeat(2, 1fr);
-            }}
-            .stat-card.primary-large {{
-                grid-column: span 2 !important;
             }}
         }}
         
@@ -6162,59 +6156,23 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         @media (min-width: 768px) {{
             .controls-toolbar.floating {{
                 position: fixed;
-                top: 20px;
-                right: max(20px, calc((100vw - 1000px) / 2 + 20px));
-                width: 240px;
-                flex-direction: column;
-                align-items: stretch;
+                top: 0;
+                left: 50%;
+                transform: translate(-50%, 0);
+                width: 100%;
+                max-width: 1000px;
+                border-radius: 0 0 12px 12px;
+                border-left: 1px solid var(--border-color);
+                border-right: 1px solid var(--border-color);
+                border-top: none;
+                border-bottom: 1px solid var(--border-color);
                 background-color: rgba(17, 24, 39, 0.95);
                 backdrop-filter: blur(10px);
-                border: 1px solid var(--primary);
-                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
                 z-index: 1000;
-                animation: floatIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-                border-radius: 16px;
-                padding: 20px;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+                padding: 10px 20px;
                 box-sizing: border-box;
-                gap: 15px;
-            }}
-            
-            .controls-toolbar.floating .search-box {{
-                max-width: none;
-                width: 100%;
-            }}
-            
-            .controls-toolbar.floating .filter-buttons {{
-                flex-direction: column;
-                align-items: stretch;
-                gap: 8px;
-            }}
-            
-            .controls-toolbar.floating .filter-group {{
-                display: block;
-                width: 100%;
-            }}
-            
-            .controls-toolbar.floating .filter-btn {{
-                width: 100%;
-                text-align: left;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                box-sizing: border-box;
-            }}
-            
-            .controls-toolbar.floating .filter-dropdown {{
-                top: 0;
-                right: calc(100% + 10px);
-                left: auto;
-                margin-top: 0;
-                box-shadow: -5px 10px 25px rgba(0, 0, 0, 0.6);
-                animation: floatDropdownIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-            }}
-            
-            .packages-list.floating-active {{
-                padding-right: 280px;
+                animation: desktopStickyIn 0.2s ease;
             }}
         }}
         
@@ -6245,25 +6203,12 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             }}
         }}
         
-        @keyframes floatIn {{
+        @keyframes desktopStickyIn {{
             from {{
-                transform: translateX(30px);
-                opacity: 0;
+                transform: translate(-50%, -100%);
             }}
             to {{
-                transform: translateX(0);
-                opacity: 1;
-            }}
-        }}
-        
-        @keyframes floatDropdownIn {{
-            from {{
-                transform: translateX(10px);
-                opacity: 0;
-            }}
-            to {{
-                transform: translateX(0);
-                opacity: 1;
+                transform: translate(-50%, 0);
             }}
         }}
         
@@ -6482,7 +6427,6 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             display: flex;
             flex-direction: column;
             gap: 15px;
-            transition: padding-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }}
         
         .package-card {{
@@ -6978,13 +6922,11 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            transition: transform 0.1s ease, filter 0.2s ease;
-            margin-top: 10px;
+            transition: filter 0.2s ease;
         }}
         
         .btn-remediation:hover {{
             filter: brightness(1.1);
-            transform: translateY(-1px);
         }}
         
         .btn-ai-prompt {{
@@ -6999,18 +6941,12 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            transition: transform 0.1s ease, filter 0.2s ease;
+            transition: filter 0.2s ease;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-            margin-top: 10px;
         }}
         
         .btn-ai-prompt:hover {{
             filter: brightness(1.15);
-            transform: translateY(-1px);
-        }}
-        
-        .btn-ai-prompt:active {{
-            transform: translateY(0);
         }}
     </style>
 </head>
