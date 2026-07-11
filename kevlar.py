@@ -4826,36 +4826,42 @@ def validate_configuration_drift(results):
 # ==============================================================================
 
 
-def get_char_width(char):
-    """Returns visual terminal width of a character."""
-    if char in ("🚫", "🛡️", "🛡"):
-        return 2
-    w = unicodedata.east_asian_width(char)
-    if w in ('W', 'F'):
-        return 2
-    if ord(char) > 0xffff:
-        return 2
-    return 1
+class TerminalTextFormatter:
+    """Utility class for terminal visual text formatting and character width calculations."""
 
-def visual_len(s):
-    """Calculates visual terminal length of a string, ignoring ANSI codes."""
-    clean_s = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', s)
-    return sum(get_char_width(c) for c in clean_s)
+    @staticmethod
+    def get_char_width(char):
+        """Returns visual terminal width of a character."""
+        if char in ("🚫", "🛡️", "🛡"):
+            return 2
+        w = unicodedata.east_asian_width(char)
+        if w in ('W', 'F'):
+            return 2
+        if ord(char) > 0xffff:
+            return 2
+        return 1
 
-def pad_string(text, width, align="left"):
-    """Pads a string (potentially containing ANSI codes and wide chars) to target width."""
-    vlen = visual_len(text)
-    if vlen >= width:
-        return text
-    diff = width - vlen
-    if align == "left":
-        return text + (" " * diff)
-    elif align == "right":
-        return (" " * diff) + text
-    else: # center
-        left = diff // 2
-        right = diff - left
-        return (" " * left) + text + (" " * right)
+    @staticmethod
+    def visual_len(s):
+        """Calculates visual terminal length of a string, ignoring ANSI codes."""
+        clean_s = re.sub(r'\033\[[0-9;]*[a-zA-Z]', '', s)
+        return sum(TerminalTextFormatter.get_char_width(c) for c in clean_s)
+
+    @staticmethod
+    def pad_string(text, width, align="left"):
+        """Pads a string (potentially containing ANSI codes and wide chars) to target width."""
+        vlen = TerminalTextFormatter.visual_len(text)
+        if vlen >= width:
+            return text
+        diff = width - vlen
+        if align == "left":
+            return text + (" " * diff)
+        elif align == "right":
+            return (" " * diff) + text
+        else: # center
+            left = diff // 2
+            right = diff - left
+            return (" " * left) + text + (" " * right)
 
 def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
     """Draws a beautiful styled console report table with precise alignment."""
@@ -4906,13 +4912,13 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
         
     print(border_top)
     
-    hdr_name = pad_string(f" {col_name}", w_name, align="left")
-    hdr_type = pad_string(col_type, w_type, align="center")
-    hdr_dec = pad_string(col_dec, w_dec, align="center")
-    hdr_inst = pad_string(col_inst, w_inst, align="center")
-    hdr_latest = pad_string(col_latest, w_latest, align="center")
-    hdr_status = pad_string(col_status, w_status, align="center")
-    hdr_vuls = pad_string(col_vuls, w_vuls, align="center")
+    hdr_name = TerminalTextFormatter.pad_string(f" {col_name}", w_name, align="left")
+    hdr_type = TerminalTextFormatter.pad_string(col_type, w_type, align="center")
+    hdr_dec = TerminalTextFormatter.pad_string(col_dec, w_dec, align="center")
+    hdr_inst = TerminalTextFormatter.pad_string(col_inst, w_inst, align="center")
+    hdr_latest = TerminalTextFormatter.pad_string(col_latest, w_latest, align="center")
+    hdr_status = TerminalTextFormatter.pad_string(col_status, w_status, align="center")
+    hdr_vuls = TerminalTextFormatter.pad_string(col_vuls, w_vuls, align="center")
     
     if vuls_enabled:
         print(f"{t['vertical']}{hdr_name}{t['vertical']}{hdr_type}{t['vertical']}{hdr_dec}{t['vertical']}{hdr_inst}{t['vertical']}{hdr_latest}{t['vertical']}{hdr_status}{t['vertical']}{hdr_vuls}{t['vertical']}")
@@ -4930,7 +4936,7 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
                 dep_type = "Direct"
             elif r["name"] in pkg_data.get("devDependencies", {}):
                 dep_type = "Dev"
-        if r.get("required_by") and r["name"] != "node":
+        if dep_type == "Transitive" and r.get("required_by") and r["name"] != "node":
             dep_type = "Transitive"
                 
         status_str = r["status"]
@@ -4965,12 +4971,12 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
             
         styled_status = f"{color}{icon} {status_display}{COLOR_RESET}"
         
-        name_cell = pad_string(f" {r['name']}", w_name, align="left")
-        type_cell = pad_string(dep_type, w_type, align="center")
-        dec_cell = pad_string(r['declared'] or 'N/A', w_dec, align="center")
-        inst_cell = pad_string(r['installed'] or 'N/A', w_inst, align="center")
-        latest_cell = pad_string(r['latest'] or 'N/A', w_latest, align="center")
-        status_cell = pad_string(styled_status, w_status, align="center")
+        name_cell = TerminalTextFormatter.pad_string(f" {r['name']}", w_name, align="left")
+        type_cell = TerminalTextFormatter.pad_string(dep_type, w_type, align="center")
+        dec_cell = TerminalTextFormatter.pad_string(r['declared'] or 'N/A', w_dec, align="center")
+        inst_cell = TerminalTextFormatter.pad_string(r['installed'] or 'N/A', w_inst, align="center")
+        latest_cell = TerminalTextFormatter.pad_string(r['latest'] or 'N/A', w_latest, align="center")
+        status_cell = TerminalTextFormatter.pad_string(styled_status, w_status, align="center")
         
         if vuls_enabled:
             vuls_list = r.get("vulnerabilities", [])
@@ -4979,7 +4985,7 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
                 styled_vuls = f"{COLOR_RED}{COLOR_BOLD}{vuls_count}{COLOR_RESET}"
             else:
                 styled_vuls = f"{COLOR_GREEN}{ICON_OK}{COLOR_RESET}" if ICON_OK == "✔" else f"{COLOR_GREEN}0{COLOR_RESET}"
-            vuls_cell = pad_string(styled_vuls, w_vuls, align="center")
+            vuls_cell = TerminalTextFormatter.pad_string(styled_vuls, w_vuls, align="center")
             
             print(f"{t['vertical']}{name_cell}{t['vertical']}{type_cell}{t['vertical']}{dec_cell}{t['vertical']}{inst_cell}{t['vertical']}{latest_cell}{t['vertical']}{status_cell}{t['vertical']}{vuls_cell}{t['vertical']}")
         else:
@@ -5159,7 +5165,7 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
                     elif r["name"] in pkg_data.get("devDependencies", {}):
                         dep_type = "Dev"
                         
-                if r.get("required_by") and r["name"] != "node":
+                if dep_type == "Transitive" and r.get("required_by") and r["name"] != "node":
                     dep_type = f"Transitive (via {', '.join(r['required_by'])})"
                         
                 status_str = r["status"]
