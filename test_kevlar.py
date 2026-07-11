@@ -915,6 +915,39 @@ class TestKevlar(unittest.TestCase):
         finally:
             os.remove(tmp_path)
 
+    def test_match_line_for_dependency(self):
+        # npm / php
+        self.assertTrue(kevlar.match_line_for_dependency('  "lodash": "^4.17.21"', 'lodash', 'npm'))
+        self.assertTrue(kevlar.match_line_for_dependency('  "lodash": "^4.17.21"', 'lodash', 'php'))
+        self.assertFalse(kevlar.match_line_for_dependency('  "lodash": "^4.17.21"', 'not-lodash', 'npm'))
+        
+        # pip
+        self.assertTrue(kevlar.match_line_for_dependency('requests==2.25.1', 'requests', 'pip'))
+        self.assertTrue(kevlar.match_line_for_dependency('  flask >= 2.0', 'flask', 'pip'))
+        self.assertTrue(kevlar.match_line_for_dependency('    "itsdangerous>=2.0",', 'itsdangerous', 'pip'))
+        self.assertFalse(kevlar.match_line_for_dependency('flask-login==0.5.0', 'flask', 'pip'))
+        
+        # nuget
+        self.assertTrue(kevlar.match_line_for_dependency('<PackageReference Include="Newtonsoft.Json" Version="13.0.1" />', 'Newtonsoft.Json', 'nuget'))
+        
+        # maven
+        self.assertTrue(kevlar.match_line_for_dependency('    <artifactId>log4j-core</artifactId>', 'org.apache.logging.log4j:log4j-core', 'maven'))
+        
+        # go
+        self.assertTrue(kevlar.match_line_for_dependency('\tgithub.com/gin-gonic/gin v1.7.2', 'github.com/gin-gonic/gin', 'go'))
+        
+        # rust
+        self.assertTrue(kevlar.match_line_for_dependency('serde = "1.0"', 'serde', 'rust'))
+        
+        # ruby
+        self.assertTrue(kevlar.match_line_for_dependency("gem 'rails'", 'rails', 'ruby'))
+        
+        # gradle
+        self.assertTrue(kevlar.match_line_for_dependency("implementation 'com.google.guava:guava:30.1-jre'", 'com.google.guava:guava', 'gradle'))
+        
+        # fallback / unknown tech
+        self.assertFalse(kevlar.match_line_for_dependency('some random line', 'package', 'unknown-tech'))
+
     def test_parse_composer_lock(self):
         import tempfile
         import json

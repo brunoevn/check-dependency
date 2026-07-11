@@ -5277,58 +5277,72 @@ def get_upgraded_constraint(declared_ver, latest_ver):
     
     return latest_ver
 
+def _match_npm_php(line_lower, pkg_lower):
+    pattern = r'"' + re.escape(pkg_lower) + r'"\s*:'
+    return re.search(pattern, line_lower) is not None
+
+def _match_pip(line_lower, pkg_lower):
+    pattern_req = r'^\s*' + re.escape(pkg_lower) + r'\s*(==|>=|<=|~=|!=|>|<|@|;|$)'
+    pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+    pattern_setup = r'[\'"]' + re.escape(pkg_lower) + r'([>=<!~]+|[\'"]\s*,)'
+    return (re.search(pattern_req, line_lower) is not None or 
+            re.search(pattern_toml, line_lower) is not None or
+            re.search(pattern_setup, line_lower) is not None)
+
+def _match_nuget(line_lower, pkg_lower):
+    pattern = r'(include|update)\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+    return re.search(pattern, line_lower) is not None
+
+def _match_maven(line_lower, pkg_lower):
+    parts = pkg_lower.split(":")
+    artifact = parts[-1]
+    pattern = r'<artifactid>\s*' + re.escape(artifact) + r'\s*</artifactid>'
+    return re.search(pattern, line_lower) is not None
+
+def _match_go(line_lower, pkg_lower):
+    pattern = re.escape(pkg_lower) + r'\s+v\d+'
+    return re.search(pattern, line_lower) is not None
+
+def _match_rust(line_lower, pkg_lower):
+    pattern = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+    return re.search(pattern, line_lower) is not None
+
+def _match_ruby(line_lower, pkg_lower):
+    pattern = r'gem\s+[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+    return re.search(pattern, line_lower) is not None
+
+def _match_gradle(line_lower, pkg_lower):
+    parts = pkg_lower.split(":")
+    if len(parts) > 1:
+        group, name_part = parts[0], parts[1]
+        pattern_build = re.escape(group) + r':' + re.escape(name_part)
+        return re.search(pattern_build, line_lower) is not None
+    else:
+        pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
+        pattern_name = r'name\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
+        return (re.search(pattern_toml, line_lower) is not None or 
+                re.search(pattern_name, line_lower) is not None)
+
+MATCH_STRATEGIES = {
+    "npm": _match_npm_php,
+    "php": _match_npm_php,
+    "pip": _match_pip,
+    "nuget": _match_nuget,
+    "maven": _match_maven,
+    "go": _match_go,
+    "rust": _match_rust,
+    "ruby": _match_ruby,
+    "gradle": _match_gradle
+}
+
 def match_line_for_dependency(line, package_name, tech):
     """Checks if a manifest file line matches the given package dependency declaration."""
     line_lower = line.lower()
     pkg_lower = package_name.lower()
     
-    if tech == "npm" or tech == "php":
-        pattern = r'"' + re.escape(pkg_lower) + r'"\s*:'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "pip":
-        pattern_req = r'^\s*' + re.escape(pkg_lower) + r'\s*(==|>=|<=|~=|!=|>|<|@|;|$)'
-        pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
-        pattern_setup = r'[\'"]' + re.escape(pkg_lower) + r'([>=<!~]+|[\'"]\s*,)'
-        
-        return (re.search(pattern_req, line_lower) is not None or 
-                re.search(pattern_toml, line_lower) is not None or
-                re.search(pattern_setup, line_lower) is not None)
-                
-    elif tech == "nuget":
-        pattern = r'(include|update)\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "maven":
-        parts = pkg_lower.split(":")
-        artifact = parts[-1]
-        pattern = r'<artifactId>\s*' + re.escape(artifact) + r'\s*</artifactId>'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "go":
-        pattern = re.escape(pkg_lower) + r'\s+v\d+'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "rust":
-        pattern = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "ruby":
-        pattern = r'gem\s+[\'"]' + re.escape(pkg_lower) + r'[\'"]'
-        return re.search(pattern, line_lower) is not None
-        
-    elif tech == "gradle":
-        parts = pkg_lower.split(":")
-        if len(parts) > 1:
-            group, name_part = parts[0], parts[1]
-            pattern_build = re.escape(group) + r':' + re.escape(name_part)
-            return re.search(pattern_build, line_lower) is not None
-        else:
-            pattern_toml = r'^\s*' + re.escape(pkg_lower) + r'\s*=\s*'
-            pattern_name = r'name\s*=\s*[\'"]' + re.escape(pkg_lower) + r'[\'"]'
-            return (re.search(pattern_toml, line_lower) is not None or 
-                    re.search(pattern_name, line_lower) is not None)
-                    
+    strategy = MATCH_STRATEGIES.get(tech)
+    if strategy:
+        return strategy(line_lower, pkg_lower)
     return False
 
 def find_manifest_files(project_path, technology):
