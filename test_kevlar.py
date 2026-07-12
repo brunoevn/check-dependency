@@ -1269,5 +1269,70 @@ class TestKevlar(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_repo_resolution_debug_mode(self):
+        import io
+        from unittest.mock import patch
+        
+        # Save original values
+        original_debug = kevlar.DEBUG_MODE
+        original_fetch = kevlar._fetch_registry_json_or_xml
+        
+        def mock_fetch(*args, **kwargs):
+            raise ValueError("Mock connection error")
+            
+        kevlar._fetch_registry_json_or_xml = mock_fetch
+        
+        try:
+            # Case 1: DEBUG_MODE is False
+            kevlar.DEBUG_MODE = False
+            
+            captured_output = io.StringIO()
+            with patch('sys.stdout', new=captured_output):
+                res_npm = kevlar.resolve_npm_repo("some-pkg")
+                res_nuget = kevlar.resolve_nuget_repo("some-pkg", "1.0.0")
+                res_maven = kevlar.resolve_maven_repo("https://repo.maven.org/", "org/some", "pkg", "1.0.0")
+                
+            self.assertIsNone(res_npm)
+            self.assertIsNone(res_nuget)
+            self.assertIsNone(res_maven)
+            self.assertEqual(captured_output.getvalue(), "")
+            
+            # Case 2: DEBUG_MODE is True
+            kevlar.DEBUG_MODE = True
+            
+            captured_output = io.StringIO()
+            with patch('sys.stdout', new=captured_output):
+                res_npm = kevlar.resolve_npm_repo("some-pkg")
+                
+            self.assertIsNone(res_npm)
+            output = captured_output.getvalue()
+            self.assertIn("Failed to resolve NPM repository for 'some-pkg'", output)
+            self.assertIn("Mock connection error", output)
+            self.assertIn("traceback", output.lower())
+            
+            captured_output = io.StringIO()
+            with patch('sys.stdout', new=captured_output):
+                res_nuget = kevlar.resolve_nuget_repo("some-pkg", "1.0.0")
+                
+            self.assertIsNone(res_nuget)
+            output = captured_output.getvalue()
+            self.assertIn("Failed to resolve NuGet repository for 'some-pkg' (version 1.0.0)", output)
+            self.assertIn("Mock connection error", output)
+            self.assertIn("traceback", output.lower())
+            
+            captured_output = io.StringIO()
+            with patch('sys.stdout', new=captured_output):
+                res_maven = kevlar.resolve_maven_repo("https://repo.maven.org/", "org/some", "pkg", "1.0.0")
+                
+            self.assertIsNone(res_maven)
+            output = captured_output.getvalue()
+            self.assertIn("Failed to resolve Maven repository for 'org/some:pkg' (version 1.0.0) from https://repo.maven.org/", output)
+            self.assertIn("Mock connection error", output)
+            self.assertIn("traceback", output.lower())
+            
+        finally:
+            kevlar.DEBUG_MODE = original_debug
+            kevlar._fetch_registry_json_or_xml = original_fetch
+
 if __name__ == "__main__":
     unittest.main()

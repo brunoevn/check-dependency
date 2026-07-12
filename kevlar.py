@@ -1075,8 +1075,10 @@ def resolve_npm_repo(name):
         data = _fetch_registry_json_or_xml(url, format="json")
         repo = data.get("repository")
         return clean_repo_url(repo)
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"{COLOR_YELLOW}{ICON_WARN} Debug: Failed to resolve NPM repository for '{name}': {e}{COLOR_RESET}")
+            traceback.print_exc(file=sys.stdout)
     return None
 
 def resolve_nuget_repo(name, version):
@@ -1100,8 +1102,10 @@ def resolve_nuget_repo(name, version):
             return clean_repo_url(repo_url)
         if proj_url:
             return clean_repo_url(proj_url)
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"{COLOR_YELLOW}{ICON_WARN} Debug: Failed to resolve NuGet repository for '{name}' (version {version}): {e}{COLOR_RESET}")
+            traceback.print_exc(file=sys.stdout)
     return None
 
 def resolve_maven_repo(registry_url, group_path, artifact_id, version):
@@ -1122,8 +1126,10 @@ def resolve_maven_repo(registry_url, group_path, artifact_id, version):
                 if elem.text:
                     proj_url = elem.text
         return clean_repo_url(scm_url or proj_url)
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"{COLOR_YELLOW}{ICON_WARN} Debug: Failed to resolve Maven repository for '{group_path}:{artifact_id}' (version {version}) from {registry_url}: {e}{COLOR_RESET}")
+            traceback.print_exc(file=sys.stdout)
     return None
 
 def resolve_go_repo(name):
