@@ -337,8 +337,35 @@ def _sanitize_error_message(exc, target_name):
 
 def safe_urlopen(req, timeout=10, max_retries=3, backoff=0.5):
     """Safely opens a URL with retries, exponential backoff, and default headers."""
+    # 1. Extraer la URL de forma segura
     if isinstance(req, str):
-        req = urllib.request.Request(req)
+        url_str = req
+    elif isinstance(req, urllib.request.Request):
+        url_str = req.full_url
+    elif hasattr(req, "full_url"):
+        url_str = req.full_url
+    elif hasattr(req, "get_full_url"):
+        url_str = req.get_full_url()
+    else:
+        raise ValueError("Protocolo de comunicación no permitido")
+
+    # 2. Sanitizar de forma estricta la URL entrante
+    url_str = url_str.strip()
+    if any(c in url_str for c in "\r\n\t \x00"):
+        raise ValueError("Protocolo de comunicación no permitido")
+
+    # 3. Validar esquema usando urlparse (solo permitir https y http, priorizando https)
+    parsed = urllib.parse.urlparse(url_str)
+    scheme = parsed.scheme.lower()
+    if scheme not in ("https", "http"):
+        raise ValueError("Protocolo de comunicación no permitido")
+
+    # 4. Asegurar que la validación ocurre antes de procesar/instanciar el Request hacia la red
+    if isinstance(req, str):
+        req = urllib.request.Request(url_str)
+    else:
+        req.full_url = url_str
+
     if not req.has_header("User-Agent"):
         req.add_header("User-Agent", f"Kevlar-CheckDeps/{VERSION}")
         

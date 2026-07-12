@@ -1547,5 +1547,51 @@ class TestKevlar(unittest.TestCase):
         self.assertEqual(consolidated_log["runs"][0]["results"][0]["ruleId"], "CVE-2023-3000")
         self.assertEqual(consolidated_log["runs"][1]["results"][0]["ruleId"], "KEVLAR-OUTDATED-DEPENDENCY")
 
+    def test_safe_urlopen_security_validations(self):
+        from unittest.mock import patch, MagicMock
+        import urllib.request
+        
+        # Test allowed schemes (https, http) using mocked urlopen
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = MagicMock()
+            
+            try:
+                kevlar.safe_urlopen("https://example.com/api", max_retries=1)
+            except Exception as e:
+                self.fail(f"safe_urlopen raised exception on valid HTTPS URL: {e}")
+                
+            try:
+                kevlar.safe_urlopen("http://example.com/api", max_retries=1)
+            except Exception as e:
+                self.fail(f"safe_urlopen raised exception on valid HTTP URL: {e}")
+                
+        # Test disallowed schemes
+        with self.assertRaises(ValueError) as ctx:
+            kevlar.safe_urlopen("file:///etc/passwd")
+        self.assertEqual(str(ctx.exception), "Protocolo de comunicación no permitido")
+        
+        with self.assertRaises(ValueError) as ctx:
+            kevlar.safe_urlopen("ftp://example.com")
+        self.assertEqual(str(ctx.exception), "Protocolo de comunicación no permitido")
+
+        with self.assertRaises(ValueError) as ctx:
+            kevlar.safe_urlopen("gopher://example.com")
+        self.assertEqual(str(ctx.exception), "Protocolo de comunicación no permitido")
+        
+        # Test protocol smuggling / control characters
+        with self.assertRaises(ValueError):
+            kevlar.safe_urlopen("https://example.com\r\n/smuggle")
+            
+        with self.assertRaises(ValueError):
+            kevlar.safe_urlopen("https://example.com\t/smuggle")
+
+        with self.assertRaises(ValueError):
+            kevlar.safe_urlopen("https://example.com\x00/smuggle")
+            
+        # Test request object with disallowed scheme
+        req = urllib.request.Request("file:///etc/passwd")
+        with self.assertRaises(ValueError):
+            kevlar.safe_urlopen(req)
+
 if __name__ == "__main__":
     unittest.main()
