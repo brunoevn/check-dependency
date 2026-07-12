@@ -733,87 +733,69 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
     sys.stdout.flush()
     return results
 
+def _is_major_version_eol(major_version: str, schedule: dict, today_date: date) -> bool:
+    """Determines if a specific major version of Node.js is End-of-Life (EOL)."""
+    end_info = schedule.get(major_version)
+    if not end_info:
+        # Placeholder or unknown future versions are not EOL
+        return False
+    end_str = end_info.get("end")
+    if not end_str:
+        return True
+    try:
+        end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
+        return end_date <= today_date
+    except Exception:
+        return True
+
 def analyze_node_constraint(constraint_str):
     """Analyzes a Node.js version constraint and checks if it permits EOL versions.
     Returns (status, deprecated_msg, error_msg, latest_recommendation).
     """
-    schedule = fetch_node_schedule()
+    FUTURE_MAJOR_PLACEHOLDER = "99"
+    DEFAULT_FALLBACK_MAJOR = "22"
     
+    schedule = fetch_node_schedule()
+    if not schedule:
+        return "error", None, "We cannot recommend a valid version at this time as there is no internet connection.", "unknown"
+        
     today = date.today()
     
-    # Dynamically build test_majors list from schedule keys
-    test_majors = []
-    for k in schedule.keys():
-        try:
-            float(k)
-            test_majors.append(k)
-        except ValueError:
-            pass
-    test_majors.sort(key=lambda x: float(x))
-    test_majors.append("99")
+    # Sort and filter known major versions from the schedule keys
+    test_majors = sorted(
+        [k for k in schedule.keys() if k.isdigit()],
+        key=int
+    )
+    test_majors.append(FUTURE_MAJOR_PLACEHOLDER)
+    
+    # Filter for active (non-EOL) even major versions
+    active_even_majors = [
+        major for major in test_majors
+        if major != FUTURE_MAJOR_PLACEHOLDER
+        and int(major) % 2 == 0
+        and not _is_major_version_eol(major, schedule, today)
+    ]
+    latest_lts = active_even_majors[-1] if active_even_majors else DEFAULT_FALLBACK_MAJOR
     
     if not constraint_str or constraint_str.strip() in ("*", "x", "any"):
-        latest_lts = "22"
-        for major in reversed(test_majors):
-            if major == "99":
-                continue
-            try:
-                if int(float(major)) % 2 != 0:
-                    continue
-                end_info = schedule.get(major)
-                end_str = end_info.get("end") if end_info else None
-                if end_str:
-                    end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
-                    if end_date > today:
-                        latest_lts = major
-                        break
-            except Exception:
-                pass
         return "minor", f"Node.js engine constraint is wildcard or missing. Recommend specifying >={latest_lts}.0.0.", None, f">={latest_lts}.0.0"
         
-    eol_majors = []
-    supported_majors = []
+    # Find all major versions satisfied by the constraint
+    satisfied_majors = [
+        major for major in test_majors
+        if check_semver_satisfies(f"{major}.0.0", constraint_str)
+    ]
     
-    for major in test_majors:
-        ver_str = f"{major}.0.0"
-        if check_semver_satisfies(ver_str, constraint_str):
-            end_info = schedule.get(major)
-            end_str = end_info.get("end") if end_info else None
-            is_eol = True
-            if end_str:
-                try:
-                    end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
-                    if end_date > today:
-                        is_eol = False
-                except Exception:
-                    pass
-            elif major == "99":
-                is_eol = False
-                
-            if is_eol:
-                eol_majors.append(major)
-            else:
-                supported_majors.append(major)
-                
-    supported_even_majors = []
-    for major in test_majors:
-        if major == "99":
-            continue
-        try:
-            if int(float(major)) % 2 != 0:
-                continue
-            end_info = schedule.get(major)
-            end_str = end_info.get("end") if end_info else None
-            if end_str:
-                end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
-                if end_date > today:
-                    supported_even_majors.append(int(float(major)))
-        except Exception:
-            pass
-
+    # Categorize satisfied major versions into EOL and supported
+    eol_majors = [major for major in satisfied_majors if _is_major_version_eol(major, schedule, today)]
+    supported_majors = [major for major in satisfied_majors if not _is_major_version_eol(major, schedule, today)]
+    
+    # Map active even majors as integers
+    supported_even_majors = [int(major) for major in active_even_majors]
+    
     recommendations = []
     if eol_majors:
-        highest_eol = max(int(float(m)) for m in eol_majors)
+        highest_eol = max(int(m) for m in eol_majors)
         
         # Previous active supported
         prev_opts = [m for m in supported_even_majors if m < highest_eol]
@@ -841,7 +823,7 @@ def analyze_node_constraint(constraint_str):
     elif recommendations:
         recommendation = recommendations[0]
     else:
-        recommendation = ">=22.0.0"
+        recommendation = f">={DEFAULT_FALLBACK_MAJOR}.0.0"
         
     recs_detail = []
     for rec in recommendations:
@@ -864,7 +846,7 @@ def analyze_node_constraint(constraint_str):
         msg = f"Node.js constraint '{constraint_str}' allows EOL versions ({', '.join(eol_majors)}). Recommend updating lower bound to {recommendation}.{detail_str}"
         return status, msg, None, recommendation
     else:
-        latest_stable = f"v{supported_even_majors[-1]}" if supported_even_majors else "v22"
+        latest_stable = f"v{supported_even_majors[-1]}" if supported_even_majors else f"v{DEFAULT_FALLBACK_MAJOR}"
         return "up-to-date", None, None, latest_stable
 
 def find_node_constraint(base_path, pkg_data):

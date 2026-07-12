@@ -1334,5 +1334,65 @@ class TestKevlar(unittest.TestCase):
             kevlar.DEBUG_MODE = original_debug
             kevlar._fetch_registry_json_or_xml = original_fetch
 
+    def test_node_constraint_refactored(self):
+        from datetime import date
+        from unittest.mock import patch
+        
+        # Test _is_major_version_eol directly
+        schedule = {
+            "18": {"end": "2025-04-30"},
+            "22": {"end": "2027-04-30"}
+        }
+        today = date(2026, 7, 12)
+        
+        self.assertTrue(kevlar._is_major_version_eol("18", schedule, today))
+        self.assertFalse(kevlar._is_major_version_eol("22", schedule, today))
+        self.assertFalse(kevlar._is_major_version_eol("99", schedule, today))
+        
+        # Mock schedule and date for analyze_node_constraint
+        mock_schedule = {
+            "18": {"maintenance": "2023-10-18", "end": "2025-04-30"},
+            "20": {"maintenance": "2024-10-22", "end": "2026-04-30"},
+            "22": {"maintenance": "2025-10-21", "end": "2027-04-30"},
+            "24": {"maintenance": "2026-10-20", "end": "2028-04-30"}
+        }
+        
+        with patch('kevlar.fetch_node_schedule', return_value=mock_schedule), \
+             patch('kevlar.date') as mock_date:
+            mock_date.today.return_value = today
+            
+            # Case 1: Wildcard/any
+            status, depr, err, rec = kevlar.analyze_node_constraint("*")
+            self.assertEqual(status, "minor")
+            self.assertIn("wildcard or missing", depr)
+            self.assertEqual(rec, ">=24.0.0")
+            
+            # Case 2: Only EOL
+            status, depr, err, rec = kevlar.analyze_node_constraint("^18.0.0")
+            self.assertEqual(status, "error")
+            self.assertIsNone(depr)
+            self.assertIn("only satisfies EOL versions", err)
+            
+            # Case 3: EOL and Supported
+            status, depr, err, rec = kevlar.analyze_node_constraint(">=18.0.0")
+            self.assertEqual(status, "minor")
+            self.assertIsNone(err)
+            self.assertIn("allows EOL versions", depr)
+            
+            # Case 4: Only Supported
+            status, depr, err, rec = kevlar.analyze_node_constraint(">=22.0.0")
+            self.assertEqual(status, "up-to-date")
+            self.assertIsNone(depr)
+            self.assertIsNone(err)
+            self.assertEqual(rec, "v24")
+            
+            # Case 5: Offline scenario (empty schedule)
+            with patch('kevlar.fetch_node_schedule', return_value={}):
+                status, depr, err, rec = kevlar.analyze_node_constraint(">=22.0.0")
+                self.assertEqual(status, "error")
+                self.assertIsNone(depr)
+                self.assertIn("We cannot recommend a valid version at this time as there is no internet connection.", err)
+                self.assertEqual(rec, "unknown")
+
 if __name__ == "__main__":
     unittest.main()
