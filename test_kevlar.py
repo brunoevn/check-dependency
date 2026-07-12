@@ -76,6 +76,17 @@ class TestKevlar(unittest.TestCase):
         cvss4_vector = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
         score4 = kevlar.calculate_cvss4_score_approx(cvss4_vector)
         self.assertAlmostEqual(score4, 9.8, places=1)
+
+        # Malformed vector tests (no colons, multiple colons, safe ignore checks)
+        self.assertEqual(kevlar.calculate_cvss2_score("AVN/AC:L/Au:N/C:P/I:P/A:P"), 7.5)  # AVN has no colon, ignored, AV falls back to 1.0 (N)
+        self.assertEqual(kevlar.calculate_cvss2_score("AV:N:extra/AC:L/Au:N/C:P/I:P/A:P"), 7.5) # AV:N:extra has multiple colons, ignored, AV falls back to 1.0 (N)
+        self.assertEqual(kevlar.calculate_cvss2_score("malformed_vector_with_no_colons"), 0.0) # all ignored, impact=0, score=0.0
+        self.assertIsNone(kevlar.calculate_cvss2_score(None)) # Exception caught, returns None
+
+        self.assertEqual(kevlar.calculate_cvss3_score("CVSS:3.1/AVN/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"), 9.8) # AVN ignored, AV falls back to 0.85 (N)
+        self.assertEqual(kevlar.calculate_cvss3_score("CVSS:3.1/AV:N:extra/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"), 9.8) # AV:N:extra ignored, AV falls back to 0.85 (N)
+        self.assertEqual(kevlar.calculate_cvss3_score("malformed_vector_with_no_colons"), 0.0) # all ignored, impact=0, score=0.0
+        self.assertIsNone(kevlar.calculate_cvss3_score(None)) # Exception caught, returns None
         
     def test_get_severity_level(self):
         vuln_critical = {"severity": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}

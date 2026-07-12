@@ -7948,7 +7948,11 @@ def find_projects_recursively(base_path):
 def calculate_cvss2_score(vector_str):
     """Calculates base CVSS v2 score from a vector string."""
     try:
-        parts = {p.split(":")[0]: p.split(":")[1] for p in vector_str.split("/") if ":" in p}
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
         
         av = {"L": 0.395, "A": 0.646, "N": 1.0}.get(parts.get("AV"), 1.0)
         ac = {"H": 0.35, "M": 0.61, "L": 0.71}.get(parts.get("AC"), 0.71)
@@ -7972,7 +7976,11 @@ def calculate_cvss2_score(vector_str):
 def calculate_cvss3_score(vector_str):
     """Calculates base CVSS v3.x score from a vector string."""
     try:
-        parts = {p.split(":")[0]: p.split(":")[1] for p in vector_str.split("/") if ":" in p}
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
         
         av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}.get(parts.get("AV"), 0.85)
         ac = {"L": 0.77, "H": 0.44}.get(parts.get("AC"), 0.77)
@@ -8018,7 +8026,11 @@ def calculate_cvss3_score(vector_str):
 def calculate_cvss4_score_approx(vector_str):
     """Approximates base CVSS v4.0 score by translating metrics to v3 equivalent."""
     try:
-        parts = {p.split(":")[0]: p.split(":")[1] for p in vector_str.split("/") if ":" in p}
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
         
         av = parts.get("AV", "N")
         ac = parts.get("AC", "L")
