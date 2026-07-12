@@ -1394,5 +1394,117 @@ class TestKevlar(unittest.TestCase):
                 self.assertIn("We cannot recommend a valid version at this time as there is no internet connection.", err)
                 self.assertEqual(rec, "unknown")
 
+    def test_export_sarif_report(self):
+        import tempfile
+        import json
+        
+        results = [
+            # 1. Package with vulnerabilities
+            {
+                "name": "flask",
+                "installed": "2.0.0",
+                "declared": "2.0.0",
+                "status": "up-to-date",
+                "technology": "pip",
+                "deprecated": False,
+                "vulnerabilities": [
+                    {"id": "CVE-2023-3000", "summary": "flask vuln", "severity": "HIGH", "details": "Vulnerability details here"},
+                    {"id": "CVE-2023-3001", "summary": "flask vuln 2", "severity": "MEDIUM", "details": ""}
+                ]
+            },
+            # 2. Package with configuration drift
+            {
+                "name": "lodash",
+                "installed": "4.17.21",
+                "declared": "^4.17.0",
+                "status": "error",
+                "technology": "npm",
+                "deprecated": False,
+                "error": "Configuration Drift: Installed version '4.17.21' violates declared constraint '^4.17.0'"
+            },
+            # 3. Package with outdated major version
+            {
+                "name": "requests",
+                "installed": "2.0.0",
+                "declared": "2.0.0",
+                "latest": "3.0.0",
+                "status": "major",
+                "technology": "pip",
+                "deprecated": False
+            },
+            # 4. Deprecated package
+            {
+                "name": "deprecated-pkg",
+                "installed": "1.0.0",
+                "declared": "1.0.0",
+                "status": "up-to-date",
+                "technology": "pip",
+                "deprecated": "This package is no longer maintained."
+            }
+        ]
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            filepath = os.path.join(temp_dir, "report.sarif")
+            kevlar.export_sarif_report(results, filepath)
+            
+            self.assertTrue(os.path.exists(filepath))
+            with open(filepath, "r", encoding="utf-8") as f:
+                report = json.load(f)
+                
+            # Verify structure
+            self.assertEqual(report.get("$schema"), "https://schemastore.org/json/schema/sarif-2.1.0-rtm.5.json")
+            self.assertEqual(report.get("version"), "2.1.0")
+            self.assertIn("runs", report)
+            self.assertEqual(len(report["runs"]), 1)
+            
+            run = report["runs"][0]
+            self.assertEqual(run["tool"]["driver"]["name"], "Kevlar CheckDeps")
+            self.assertEqual(run["tool"]["driver"]["version"], kevlar.VERSION)
+            
+            # Map of results by ruleId to verify correctness
+            results_by_rule = {}
+            for res in run["results"]:
+                results_by_rule.setdefault(res["ruleId"], []).append(res)
+                
+            # 1. Vulnerability 1 (CVE-2023-3000) -> error
+            self.assertIn("CVE-2023-3000", results_by_rule)
+            v1 = results_by_rule["CVE-2023-3000"][0]
+            self.assertEqual(v1["level"], "error")
+            self.assertIn("flask", v1["message"]["text"])
+            self.assertIn("flask vuln", v1["message"]["text"])
+            
+            # Vulnerability 2 (CVE-2023-3001) -> warning
+            self.assertIn("CVE-2023-3001", results_by_rule)
+            v2 = results_by_rule["CVE-2023-3001"][0]
+            self.assertEqual(v2["level"], "warning")
+            
+            # 2. Configuration drift (KEVLAR-CONFIG-DRIFT) -> error
+            self.assertIn("KEVLAR-CONFIG-DRIFT", results_by_rule)
+            cd = results_by_rule["KEVLAR-CONFIG-DRIFT"][0]
+            self.assertEqual(cd["level"], "error")
+            self.assertIn("Configuration Drift", cd["message"]["text"])
+            
+            # 3. Outdated major (KEVLAR-OUTDATED-DEPENDENCY) -> error
+            self.assertIn("KEVLAR-OUTDATED-DEPENDENCY", results_by_rule)
+            od = results_by_rule["KEVLAR-OUTDATED-DEPENDENCY"][0]
+            self.assertEqual(od["level"], "error")
+            self.assertIn("requests", od["message"]["text"])
+            
+            # 4. Deprecated package (KEVLAR-DEPRECATED-PACKAGE) -> warning
+            self.assertIn("KEVLAR-DEPRECATED-PACKAGE", results_by_rule)
+            dp = results_by_rule["KEVLAR-DEPRECATED-PACKAGE"][0]
+            self.assertEqual(dp["level"], "warning")
+            self.assertIn("deprecated-pkg", dp["message"]["text"])
+            self.assertIn("no longer maintained", dp["message"]["text"])
+            
+            # Rules verification
+            rules = run["tool"]["driver"]["rules"]
+            rule_ids = {r["id"] for r in rules}
+            self.assertIn("CVE-2023-3000", rule_ids)
+            self.assertIn("CVE-2023-3001", rule_ids)
+            self.assertIn("KEVLAR-CONFIG-DRIFT", rule_ids)
+            self.assertIn("KEVLAR-OUTDATED-DEPENDENCY", rule_ids)
+            self.assertIn("KEVLAR-DEPRECATED-PACKAGE", rule_ids)
+
 if __name__ == "__main__":
     unittest.main()
