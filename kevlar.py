@@ -1056,13 +1056,23 @@ def get_compare_url(repo_url, installed, latest):
         return f"{repo_url}/-/compare/v{inst_clean}...v{late_clean}"
     return f"{repo_url}/compare/{inst_clean}...{late_clean}"
 
+def _fetch_registry_json_or_xml(url, format="json"):
+    """Helper to fetch and parse JSON or XML from a URL using safe_urlopen."""
+    req = urllib.request.Request(url)
+    with safe_urlopen(req, timeout=5) as response:
+        raw_data = response.read()
+    
+    if format == "json":
+        return json.loads(raw_data.decode("utf-8"))
+    elif format == "xml":
+        return safe_et_fromstring(raw_data)
+    return raw_data
+
 def resolve_npm_repo(name):
     """Fetches the repository URL for an NPM package from registry (lazy-loaded)."""
     try:
         url = f"{URL_NPM_REGISTRY}{urllib.parse.quote(name)}/latest"
-        req = urllib.request.Request(url)
-        with safe_urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
+        data = _fetch_registry_json_or_xml(url, format="json")
         repo = data.get("repository")
         return clean_repo_url(repo)
     except Exception:
@@ -1074,10 +1084,7 @@ def resolve_nuget_repo(name, version):
     try:
         name_lower = name.lower()
         url = f"{URL_NUGET_REGISTRY}{name_lower}/{version}/{name_lower}.nuspec"
-        req = urllib.request.Request(url)
-        with safe_urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-        root = safe_et_fromstring(xml_data)
+        root = _fetch_registry_json_or_xml(url, format="xml")
         repo_url = None
         proj_url = None
         for elem in root.iter():
@@ -1101,11 +1108,7 @@ def resolve_maven_repo(registry_url, group_path, artifact_id, version):
     """Parses .pom XML to find the repository or project URL of a Maven/Gradle package."""
     try:
         url = f"{registry_url}{group_path}/{artifact_id}/{version}/{artifact_id}-{version}.pom"
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", f"Kevlar-CheckDeps/{VERSION}")
-        with safe_urlopen(req, timeout=5) as response:
-            xml_data = response.read()
-        root = safe_et_fromstring(xml_data)
+        root = _fetch_registry_json_or_xml(url, format="xml")
         scm_url = None
         proj_url = None
         for elem in root.iter():
