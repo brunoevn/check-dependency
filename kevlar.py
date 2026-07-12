@@ -6058,6 +6058,12 @@ class HTMLReportTemplateProvider:
             font-weight: 600;
         }
         
+        .filter-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        
         /* Packages list */
         .packages-list {
             display: flex;
@@ -6730,6 +6736,10 @@ class HTMLReportTemplateProvider:
                     </div>
                 </div>
                 
+                <button class="filter-btn" data-cat="deprecated" onclick="setCategory('deprecated', event)">Deprecated</button>
+                <button class="filter-btn" data-cat="suppressed" onclick="setCategory('suppressed', event)">Suppressed</button>
+                <button class="filter-btn" data-cat="error" onclick="setCategory('error', event)">Errors</button>
+                
                 <div class="filter-group">
                     <button class="filter-btn" data-cat="scope" onclick="setCategory('scope', event)">
                         Scope <span class="chevron-inline">▼</span>
@@ -6770,8 +6780,6 @@ class HTMLReportTemplateProvider:
                     </div>
                 </div>
                 
-                <button class="filter-btn" data-cat="deprecated" onclick="setCategory('deprecated', event)">Deprecated</button>
-                <button class="filter-btn" data-cat="suppressed" onclick="setCategory('suppressed', event)">Suppressed</button>
                 <button class="filter-btn" data-cat="clean" onclick="setCategory('clean', event)">Clean</button>
             </div>
         </div>
@@ -6821,6 +6829,45 @@ class HTMLReportTemplateProvider:
                     pkgList.classList.remove('floating-active');
                 }
             });
+
+            // Disable empty filter buttons on page load
+            const cards = document.querySelectorAll('.package-card');
+            const hasVulnerable = Array.from(cards).some(card => card.getAttribute('data-vulnerable') === 'true');
+            const hasOutdated = Array.from(cards).some(card => ['major', 'minor', 'patch'].includes(card.getAttribute('data-status')));
+            const hasDeprecated = Array.from(cards).some(card => card.getAttribute('data-deprecated') === 'true');
+            const hasSuppressed = Array.from(cards).some(card => card.getAttribute('data-suppressed') === 'true');
+            const hasErrors = Array.from(cards).some(card => card.getAttribute('data-error') === 'true');
+            const hasClean = Array.from(cards).some(card => 
+                card.getAttribute('data-status') === 'up-to-date' && 
+                card.getAttribute('data-vulnerable') === 'false' && 
+                card.getAttribute('data-deprecated') === 'false' && 
+                card.getAttribute('data-error') === 'false'
+            );
+            
+            if (!hasVulnerable) {
+                const btn = document.querySelector('.filter-btn[data-cat="vulnerable"]');
+                if (btn) btn.disabled = true;
+            }
+            if (!hasOutdated) {
+                const btn = document.querySelector('.filter-btn[data-cat="outdated"]');
+                if (btn) btn.disabled = true;
+            }
+            if (!hasDeprecated) {
+                const btn = document.querySelector('.filter-btn[data-cat="deprecated"]');
+                if (btn) btn.disabled = true;
+            }
+            if (!hasSuppressed) {
+                const btn = document.querySelector('.filter-btn[data-cat="suppressed"]');
+                if (btn) btn.disabled = true;
+            }
+            if (!hasErrors) {
+                const btn = document.querySelector('.filter-btn[data-cat="error"]');
+                if (btn) btn.disabled = true;
+            }
+            if (!hasClean) {
+                const btn = document.querySelector('.filter-btn[data-cat="clean"]');
+                if (btn) btn.disabled = true;
+            }
         });
 
         let activeCategories = ['all'];
@@ -6960,6 +7007,7 @@ class HTMLReportTemplateProvider:
                 const isSuppressed = card.getAttribute('data-suppressed') === 'true';
                 const isDeprecated = card.getAttribute('data-deprecated') === 'true';
                 const depType = card.getAttribute('data-deptype');
+                const hasError = card.getAttribute('data-error') === 'true';
                 
                 let matchesCategory = false;
                 if (activeCategories.includes('all')) {
@@ -6993,8 +7041,13 @@ class HTMLReportTemplateProvider:
                                 matchesAll = false;
                                 break;
                             }
+                        } else if (cat === 'error') {
+                            if (!hasError) {
+                                matchesAll = false;
+                                break;
+                            }
                         } else if (cat === 'clean') {
-                            if (!(status === 'up-to-date' && !isVulnerable && !isDeprecated)) {
+                            if (!(status === 'up-to-date' && !isVulnerable && !isDeprecated && !hasError)) {
                                 matchesAll = false;
                                 break;
                             }
@@ -7712,6 +7765,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                  data-severities="{escape_html(data_severities)}"
                  data-suppressed="{"true" if is_suppressed else "false"}"
                  data-deprecated="{"true" if is_deprecated else "false"}"
+                 data-error="{"true" if error else "false"}"
                  data-deptype="{dep_type_esc.lower()}"
                  id="pkg-{i}">
                 <div class="card-header" onclick="toggleDetails({i})">
