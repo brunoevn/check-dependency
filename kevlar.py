@@ -1402,7 +1402,7 @@ def parse_package_json(filepath):
 def parse_package_lock(filepath):
     """Parses package-lock.json to extract resolved versions and their parent relations.
     Returns:
-        tuple: (resolved, parents, integrity) where integrity is (name, version) -> integrity_str
+        tuple: (resolved, parents, integrity, direct_versions) where integrity is (name, version) -> integrity_str
     """
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -1411,6 +1411,7 @@ def parse_package_lock(filepath):
         resolved = {}
         parents = {}
         integrity_dict = {}
+        direct_versions = {}
         
         # 1. Parse packages key (v2 and v3 lockfiles)
         if "packages" in data and isinstance(data["packages"], dict):
@@ -1436,6 +1437,8 @@ def parse_package_lock(filepath):
                         integrity = pkg_info.get("integrity")
                         if integrity:
                             integrity_dict[(pkg_name, version)] = integrity
+                        if len(parts) == 2:
+                            direct_versions[pkg_name] = version
                         
                     # Build parents map
                     deps = pkg_info.get("dependencies", {})
@@ -1469,6 +1472,8 @@ def parse_package_lock(filepath):
                         integrity = pkg_info.get("integrity")
                         if integrity:
                             integrity_dict[(pkg_name, version)] = integrity
+                        if parent_name == "root":
+                            direct_versions[pkg_name] = version
                     parents.setdefault(pkg_name, set()).add(parent_name)
                     
                     if "dependencies" in pkg_info and isinstance(pkg_info["dependencies"], dict):
@@ -1478,10 +1483,10 @@ def parse_package_lock(filepath):
             
         parents_clean = {k: list(v) for k, v in parents.items()}
         resolved_clean = {k: list(v) for k, v in resolved.items()}
-        return resolved_clean, parents_clean, integrity_dict
+        return resolved_clean, parents_clean, integrity_dict, direct_versions
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading package-lock.json: {e}{COLOR_RESET}")
-        return {}, {}, {}
+        return {}, {}, {}, {}
 
 def build_check_targets(pkg_data, lock_data, check_all):
     """Builds list of targets to scan."""
@@ -1516,6 +1521,39 @@ def build_check_targets(pkg_data, lock_data, check_all):
             })
             
     return targets
+
+def find_direct_installed_version(pkg_name, declared_constraint, installed_versions, direct_versions_from_lock=None):
+    """
+    Given a package name, its declared constraint, and list of installed versions,
+    identifies which version is the direct install.
+    """
+    if not installed_versions:
+        return None
+    if len(installed_versions) == 1:
+        return installed_versions[0]
+        
+    # If the lockfile parser explicitly identified the top-level direct version, use that!
+    if direct_versions_from_lock and pkg_name in direct_versions_from_lock:
+        v = direct_versions_from_lock[pkg_name]
+        if v in installed_versions:
+            return v
+            
+    # Fallback 1: The version that satisfies the declared constraint
+    if declared_constraint:
+        try:
+            satisfying = [v for v in installed_versions if check_semver_satisfies(v, declared_constraint)]
+            if len(satisfying) == 1:
+                return satisfying[0]
+            elif len(satisfying) > 1:
+                return max(satisfying, key=parse_semver)
+        except Exception:
+            pass
+            
+    # Fallback 2: The highest installed version
+    try:
+        return max(installed_versions, key=parse_semver)
+    except Exception:
+        return installed_versions[-1]
 
 def check_npm_package(target):
     """Queries npm registry for package metadata and checks target version."""
@@ -2082,11 +2120,12 @@ def run_npm_checker(args):
     lock_data = {}
     parents_data = {}
     integrity_data = {}
+    direct_versions_lock = {}
     if lock_file:
         basename = os.path.basename(lock_file)
         if basename == "package-lock.json":
             print(f"{COLOR_GRAY}{ICON_INFO} Reading package-lock.json...{COLOR_RESET}")
-            lock_data, parents_data, integrity_data = parse_package_lock(lock_file)
+            lock_data, parents_data, integrity_data, direct_versions_lock = parse_package_lock(lock_file)
         elif basename == "yarn.lock":
             print(f"{COLOR_GRAY}{ICON_INFO} Reading yarn.lock...{COLOR_RESET}")
             lock_data, parents_data, integrity_data = parse_yarn_lock(lock_file)
@@ -2109,6 +2148,34 @@ def run_npm_checker(args):
         
     start_time = time.time()
     results = check_all_targets(targets, args.concurrent)
+    
+    # Identify and isolate direct vs transitive results for npm packages
+    # We want to clear the 'declared' constraint for transitive versions of a package
+    # so they are not flagged as configuration drift and are correctly shown as transitive in the report.
+    if pkg_data and "all_direct" in pkg_data:
+        # Group result indices by package name
+        by_name = {}
+        for idx, r in enumerate(results):
+            if r["name"] != "node":
+                by_name.setdefault(r["name"], []).append(idx)
+                
+        for name, indices in by_name.items():
+            if name in pkg_data["all_direct"] and len(indices) > 1:
+                # We have multiple installed versions for a direct dependency.
+                # Find which version is the direct install.
+                declared_constraint = pkg_data["all_direct"][name]
+                installed_versions = [results[idx]["installed"] for idx in indices]
+                
+                # Get direct version
+                direct_ver = find_direct_installed_version(
+                    name, declared_constraint, installed_versions, 
+                    direct_versions_from_lock=direct_versions_lock
+                )
+                
+                # Clear 'declared' for all other versions of this package
+                for idx in indices:
+                    if results[idx]["installed"] != direct_ver:
+                        results[idx]["declared"] = None
     
     # Check integrity checksums
     for r in results:

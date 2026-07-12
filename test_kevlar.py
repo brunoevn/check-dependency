@@ -608,6 +608,57 @@ class TestKevlar(unittest.TestCase):
         # Verify missing-inst: no change
         self.assertEqual(results[4]["status"], "up-to-date")
 
+    def test_npm_transitive_same_name_no_drift(self):
+        results = [
+            {
+                "name": "tslib",
+                "declared": "^2.3.0",
+                "installed": "2.8.1",
+                "status": "up-to-date",
+                "error": None
+            },
+            {
+                "name": "tslib",
+                "declared": "^2.3.0",
+                "installed": "1.14.1",
+                "status": "up-to-date",
+                "error": None
+            }
+        ]
+        
+        pkg_data = {
+            "all_direct": {
+                "tslib": "^2.3.0"
+            }
+        }
+        direct_versions_lock = {
+            "tslib": "2.8.1"
+        }
+        
+        by_name = {}
+        for idx, r in enumerate(results):
+            if r["name"] != "node":
+                by_name.setdefault(r["name"], []).append(idx)
+                
+        for name, indices in by_name.items():
+            if name in pkg_data["all_direct"] and len(indices) > 1:
+                declared_constraint = pkg_data["all_direct"][name]
+                installed_versions = [results[idx]["installed"] for idx in indices]
+                direct_ver = kevlar.find_direct_installed_version(
+                    name, declared_constraint, installed_versions, 
+                    direct_versions_from_lock=direct_versions_lock
+                )
+                for idx in indices:
+                    if results[idx]["installed"] != direct_ver:
+                        results[idx]["declared"] = None
+                        
+        kevlar.validate_configuration_drift(results)
+        
+        self.assertEqual(results[0]["declared"], "^2.3.0")
+        self.assertIsNone(results[0]["error"])
+        self.assertIsNone(results[1]["declared"])
+        self.assertIsNone(results[1]["error"])
+
     def test_export_html_report_prompt_parameters(self):
         import tempfile
         
@@ -729,7 +780,7 @@ class TestKevlar(unittest.TestCase):
             json.dump(lock_data, tmp)
             tmp_path = tmp.name
         try:
-            resolved, parents, integrity = kevlar.parse_package_lock(tmp_path)
+            resolved, parents, integrity, direct_versions = kevlar.parse_package_lock(tmp_path)
             self.assertEqual(resolved.get("direct-dep"), ["1.0.1"])
             self.assertEqual(resolved.get("transitive-dep"), ["1.1.2"])
             self.assertEqual(resolved.get("peer-dep"), ["3.0.1"])
@@ -740,6 +791,7 @@ class TestKevlar(unittest.TestCase):
             self.assertIn("direct-dep", parents.get("transitive-dep", []))
             self.assertIn("direct-dep", parents.get("peer-dep", []))
             self.assertIn("transitive-dep", parents.get("opt-dep", []))
+            self.assertEqual(direct_versions.get("direct-dep"), "1.0.1")
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
