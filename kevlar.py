@@ -5173,6 +5173,9 @@ def export_json_report(results, filepath):
 def export_sarif_report(results, filepath):
     """Exports results as a SARIF v2.1.0 JSON document."""
     try:
+        # Cache for reading manifest file lines to avoid redundant disk I/O
+        manifest_lines_cache = {}
+
         # Define the base SARIF structure
         sarif_log = {
             "$schema": "https://schemastore.org/json/schema/sarif-2.1.0-rtm.5.json",
@@ -5221,17 +5224,23 @@ def export_sarif_report(results, filepath):
                     if manifest_files:
                         found_line = False
                         for path in manifest_files:
-                            if os.path.exists(path):
-                                try:
-                                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                                        for idx, line in enumerate(f):
-                                            if match_line_for_dependency(line, name, tech):
-                                                manifest_path = path
-                                                line_number = idx + 1
-                                                found_line = True
-                                                break
-                                except Exception:
-                                    pass
+                            if path not in manifest_lines_cache:
+                                if os.path.exists(path):
+                                    try:
+                                        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                                            manifest_lines_cache[path] = f.readlines()
+                                    except Exception:
+                                        manifest_lines_cache[path] = []
+                                else:
+                                    manifest_lines_cache[path] = []
+                            
+                            lines = manifest_lines_cache[path]
+                            for idx, line in enumerate(lines):
+                                if match_line_for_dependency(line, name, tech):
+                                    manifest_path = path
+                                    line_number = idx + 1
+                                    found_line = True
+                                    break
                             if found_line:
                                 break
                         if not manifest_path:
