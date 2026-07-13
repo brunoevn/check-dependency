@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import sys
 import os
 
@@ -1748,6 +1749,46 @@ class TestKevlar(unittest.TestCase):
             self.assertEqual(vulns[0]["id"], "GHSA-orphan-456")
             self.assertEqual(vulns[0]["summary"], "Fallback summary")
             self.assertEqual(vulns[0]["severity"], "CVSS:3.0/7.5")
+
+    def test_check_npm_package_local_dependency(self):
+        target_file = {
+            "name": "my-local-lib",
+            "declared": "file:libreria/libreria-example",
+            "installed": ["file:libreria/libreria-example"]
+        }
+        res = kevlar.check_npm_package(target_file)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["latest"], "Local")
+        self.assertEqual(res[0]["status"], "local")
+        self.assertIsNone(res[0]["error"])
+        
+        target_link = {
+            "name": "my-linked-lib",
+            "declared": "link:../linked-lib",
+            "installed": []
+        }
+        res_link = kevlar.check_npm_package(target_link)
+        self.assertEqual(len(res_link), 1)
+        self.assertEqual(res_link[0]["latest"], "Local")
+        self.assertEqual(res_link[0]["status"], "local")
+        self.assertIsNone(res_link[0]["error"])
+
+    @patch("urllib.request.urlopen")
+    def test_check_npm_package_not_found_registry(self, mock_urlopen):
+        from urllib.error import HTTPError
+        import io
+        mock_urlopen.side_effect = HTTPError("url", 404, "Not Found", {}, io.BytesIO(b""))
+        
+        target = {
+            "name": "my-private-package",
+            "declared": "^1.0.0",
+            "installed": ["1.0.0"]
+        }
+        res = kevlar.check_npm_package(target)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["latest"], "Local")
+        self.assertEqual(res[0]["status"], "local")
+        self.assertIsNone(res[0]["error"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -1578,6 +1578,21 @@ def check_npm_package(target):
     declared = target["declared"]
     installed_versions = target["installed"]
     
+    # Helper to check if a version string is explicitly local
+    def is_local_version(ver_str):
+        if not ver_str:
+            return False
+        v = ver_str.strip()
+        return (
+            v.startswith("file:") or 
+            v.startswith("link:") or 
+            v.startswith("portal:") or 
+            v.startswith("workspace:") or
+            v.startswith("./") or
+            v.startswith("../") or
+            v.startswith("/")
+        )
+        
     versions_to_check = installed_versions if installed_versions else [declared]
     results = []
     
@@ -1605,6 +1620,27 @@ def check_npm_package(target):
         all_versions = list(all_versions_meta.keys())
         
         for ver_str in versions_to_check:
+            # If the version itself is explicitly local, we treat it as Local/local
+            if is_local_version(ver_str):
+                results.append({
+                    "name": name,
+                    "declared": declared,
+                    "installed": ver_str,
+                    "latest": "Local",
+                    "latest_same_major": None,
+                    "latest_absolute": None,
+                    "status": "local",
+                    "deprecated": None,
+                    "error": None,
+                    "repo_url": None,
+                    "compare_url": None,
+                    "releases_url": None,
+                    "mismatch_checksum": False,
+                    "lockfile_checksum": None,
+                    "registry_checksums": []
+                })
+                continue
+                
             # Strip ranges prefixes to get base version for check
             clean_ver = re.sub(r'^[^\d]*', '', ver_str) if ver_str else "0.0.0"
             if not clean_ver:
@@ -1672,20 +1708,40 @@ def check_npm_package(target):
             })
             
     except urllib.error.HTTPError as e:
-        error_msg = "Not Found" if e.code == 404 else f"HTTP {e.code}"
-        for ver_str in versions_to_check:
-            results.append({
-                "name": name,
-                "declared": declared,
-                "installed": ver_str,
-                "latest": None,
-                "status": "error",
-                "deprecated": None,
-                "error": error_msg,
-                "mismatch_checksum": False,
-                "lockfile_checksum": target.get("integrity", {}).get(ver_str),
-                "registry_checksums": []
-            })
+        if e.code == 404:
+            for ver_str in versions_to_check:
+                results.append({
+                    "name": name,
+                    "declared": declared,
+                    "installed": ver_str,
+                    "latest": "Local",
+                    "latest_same_major": None,
+                    "latest_absolute": None,
+                    "status": "local",
+                    "deprecated": None,
+                    "error": None,
+                    "repo_url": None,
+                    "compare_url": None,
+                    "releases_url": None,
+                    "mismatch_checksum": False,
+                    "lockfile_checksum": target.get("integrity", {}).get(ver_str),
+                    "registry_checksums": []
+                })
+        else:
+            error_msg = f"HTTP {e.code}"
+            for ver_str in versions_to_check:
+                results.append({
+                    "name": name,
+                    "declared": declared,
+                    "installed": ver_str,
+                    "latest": None,
+                    "status": "error",
+                    "deprecated": None,
+                    "error": error_msg,
+                    "mismatch_checksum": False,
+                    "lockfile_checksum": target.get("integrity", {}).get(ver_str),
+                    "registry_checksums": []
+                })
     except Exception as e:
         for ver_str in versions_to_check:
             results.append({
@@ -5082,6 +5138,10 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
             color = COLOR_GRAY
             status_display = "Error"
             icon = ICON_ERROR
+        elif status_str == "local":
+            color = COLOR_CYAN
+            status_display = "Verify Local"
+            icon = "🔍"
             
         if r["deprecated"]:
             status_display = "Deprecated"
@@ -5560,6 +5620,8 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
                     status_display = "❌ Major Update"
                 elif status_str == "error":
                     status_display = f"❓ Error ({r['error']})"
+                elif status_str == "local":
+                    status_display = "🔍 Verify Local"
                     
                 notes_list = []
                 if r["deprecated"]:
@@ -7403,7 +7465,7 @@ class HTMLReportTemplateProvider:
                                 break;
                             }
                         } else if (cat === 'clean') {
-                            if (!(status === 'up-to-date' && !isVulnerable && !isDeprecated && !hasError)) {
+                            if (!((status === 'up-to-date' || status === 'local') && !isVulnerable && !isDeprecated && !hasError)) {
                                 matchesAll = false;
                                 break;
                             }
@@ -7856,6 +7918,8 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 badges.append('<span class="badge badge-warning">Minor Update</span>')
             elif status == "patch":
                 badges.append('<span class="badge badge-info">Patch Update</span>')
+            elif status == "local":
+                badges.append('<span class="badge badge-info">Verify Local</span>')
                 
             if is_deprecated:
                 badges.append('<span class="badge badge-depr">Deprecated</span>')
