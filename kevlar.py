@@ -1454,7 +1454,7 @@ def parse_package_lock(filepath):
                         integrity = pkg_info.get("integrity")
                         if integrity:
                             integrity_dict[(pkg_name, version)] = integrity
-                        if len(parts) == 2:
+                        if len(parts) == 2 and parts[0] == "":
                             direct_versions[pkg_name] = version
                         
                     # Build parents map

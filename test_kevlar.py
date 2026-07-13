@@ -787,6 +787,9 @@ class TestKevlar(unittest.TestCase):
                 },
                 "node_modules/opt-dep": {
                     "version": "4.0.5"
+                },
+                "node_modules/direct-dep/node_modules/opt-dep": {
+                    "version": "5.0.0"
                 }
             }
         }
@@ -798,7 +801,7 @@ class TestKevlar(unittest.TestCase):
             self.assertEqual(resolved.get("direct-dep"), ["1.0.1"])
             self.assertEqual(resolved.get("transitive-dep"), ["1.1.2"])
             self.assertEqual(resolved.get("peer-dep"), ["3.0.1"])
-            self.assertEqual(resolved.get("opt-dep"), ["4.0.5"])
+            self.assertEqual(sorted(resolved.get("opt-dep")), ["4.0.5", "5.0.0"])
             
             self.assertIn("root", parents.get("direct-dep", []))
             self.assertIn("root", parents.get("dev-dep", []))
@@ -806,6 +809,7 @@ class TestKevlar(unittest.TestCase):
             self.assertIn("direct-dep", parents.get("peer-dep", []))
             self.assertIn("transitive-dep", parents.get("opt-dep", []))
             self.assertEqual(direct_versions.get("direct-dep"), "1.0.1")
+            self.assertEqual(direct_versions.get("opt-dep"), "4.0.5")
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
