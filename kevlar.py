@@ -44,7 +44,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -1748,8 +1748,12 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
         
     results_list = []
     chunk_size = 1000
-    for i in range(0, len(queries), chunk_size):
+    total_queries = len(queries)
+    for i in range(0, total_queries, chunk_size):
         chunk_queries = queries[i:i + chunk_size]
+        current_count = min(i + chunk_size, total_queries)
+        sys.stdout.write(f"\r{COLOR_GRAY}[OSV] Sending batch query: {current_count}/{total_queries} packages...{COLOR_RESET}\033[K")
+        sys.stdout.flush()
         try:
             url = URL_OSV_QUERYBATCH
             req = urllib.request.Request(
@@ -1763,18 +1767,24 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
                 
             results_list.extend(res_data.get("results", []))
         except Exception as e:
+            sys.stdout.write("\n")
             print(f"{COLOR_RED}{ICON_ERROR} Failed to query OSV database batch: {e}{COLOR_RESET}")
             # Extend results_list with empty results to maintain index alignment with query_mapping
             results_list.extend([{"vulns": []}] * len(chunk_queries))
         
-    # Process batch results and collect vulnerability IDs to fetch details for
-    vuln_ids_to_hydrate = set()
+    # Process batch results and collect vulnerability details
+    hydrated_details = {}
     package_to_vuln_ids = {}
     
+    total_results = len(results_list)
     for i, res in enumerate(results_list):
         if i >= len(query_mapping):
             break
         name, ver_str, clean_ver = query_mapping[i]
+        
+        sys.stdout.write(f"\r{COLOR_GRAY}[OSV] Hydrating in-memory structures: {i + 1}/{total_results} packages...{COLOR_RESET}\033[K")
+        sys.stdout.flush()
+        
         vulns = res.get("vulns", [])
         
         # Hydrate subsequent pages if next_page_token is present
@@ -1804,42 +1814,52 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
                 break
                 
         if vulns:
-            ids = [v["id"] for v in vulns if "id" in v]
+            ids = []
+            for vuln in vulns:
+                if "id" in vuln:
+                    vuln_id = vuln["id"]
+                    ids.append(vuln_id)
+                    hydrated_details[vuln_id] = vuln
             package_to_vuln_ids[(name, clean_ver)] = ids
-            vuln_ids_to_hydrate.update(ids)
             
-    if not vuln_ids_to_hydrate:
-        return {}
-        
-    # Hydrate vulnerability details in parallel
-    hydrated_details = {}
-    completed = 0
-    total_ids = len(vuln_ids_to_hydrate)
-    
-    print(f"{COLOR_GRAY}[OSV] Hydrating details for {total_ids} vulnerabilities...{COLOR_RESET}")
-    
-    def fetch_vuln_detail(vuln_id):
-        try:
-            url = f"{URL_OSV_VULNS}{vuln_id}"
-            req = urllib.request.Request(url)
-            with safe_urlopen(req, timeout=10) as response:
-                return vuln_id, json.loads(response.read().decode("utf-8"))
-        except Exception as e:
-            return vuln_id, {"id": vuln_id, "summary": f"Failed to fetch details: {e}", "severity": "UNKNOWN"}
-            
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(fetch_vuln_detail, vid): vid for vid in vuln_ids_to_hydrate}
-        for future in as_completed(futures):
-            completed += 1
-            sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total_ids}] Fetching {futures[future]}...{COLOR_RESET}\033[K")
-            sys.stdout.flush()
-            
-            vid, detail = future.result()
-            hydrated_details[vid] = detail
-            
+    # Clean current line after in-memory hydration
     sys.stdout.write("\r\033[K")
     sys.stdout.flush()
+
+    # Identify any orphaned IDs that might need fallback fetching
+    all_vuln_ids = set()
+    for ids in package_to_vuln_ids.values():
+        all_vuln_ids.update(ids)
+        
+    orphaned_ids = sorted([vid for vid in all_vuln_ids if vid not in hydrated_details])
     
+    if orphaned_ids:
+        completed = 0
+        total_orphaned = len(orphaned_ids)
+        
+        def fetch_vuln_detail(vuln_id):
+            try:
+                url = f"{URL_OSV_VULNS}{vuln_id}"
+                req = urllib.request.Request(url)
+                with safe_urlopen(req, timeout=10) as response:
+                    return vuln_id, json.loads(response.read().decode("utf-8"))
+            except Exception as e:
+                return vuln_id, {"id": vuln_id, "summary": f"Failed to fetch details: {e}", "severity": "UNKNOWN"}
+                
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_vuln_detail, vid): vid for vid in orphaned_ids}
+            for future in as_completed(futures):
+                completed += 1
+                vid = futures[future]
+                sys.stdout.write(f"\r{COLOR_GRAY}[Progress: {completed}/{total_orphaned}] Fetching missing advisory details for {vid}...{COLOR_RESET}\033[K")
+                sys.stdout.flush()
+                
+                vid_res, detail = future.result()
+                hydrated_details[vid_res] = detail
+                
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+        
     # Map back to packages
     package_to_vulns = {}
     for (name, clean_ver), vids in package_to_vuln_ids.items():

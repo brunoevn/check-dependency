@@ -1628,5 +1628,126 @@ class TestKevlar(unittest.TestCase):
             self.assertEqual(call_count, 2)
             self.assertEqual(res, {})
 
+    def test_check_osv_vulnerabilities_no_fallback(self):
+        from unittest.mock import patch, MagicMock
+        import json
+
+        targets = [{"name": "lodash", "declared": "4.17.20", "installed": ["4.17.20"]}]
+        
+        batch_response = {
+            "results": [
+                {
+                    "vulns": [
+                        {
+                            "id": "GHSA-cached-123",
+                            "summary": "Prototype pollution in lodash",
+                            "details": "Details here...",
+                            "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+                            "database_specific": {"severity": "CRITICAL"}
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        url_calls = []
+
+        def mock_urlopen(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, 'full_url') else req
+            url_calls.append(url)
+            
+            mock_resp = MagicMock()
+            if "querybatch" in url:
+                mock_resp.read.return_value = json.dumps(batch_response).encode("utf-8")
+            else:
+                mock_resp.read.return_value = b"{}"
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        with patch("kevlar.safe_urlopen", side_effect=mock_urlopen):
+            res = kevlar.check_osv_vulnerabilities(targets, "npm", max_workers=2)
+            
+            self.assertTrue(any("querybatch" in u for u in url_calls))
+            self.assertFalse(any("vulns/" in u for u in url_calls))
+            self.assertIn(("lodash", "4.17.20"), res)
+            vulns = res[("lodash", "4.17.20")]
+            self.assertEqual(len(vulns), 1)
+            self.assertEqual(vulns[0]["id"], "GHSA-cached-123")
+            self.assertEqual(vulns[0]["summary"], "Prototype pollution in lodash")
+            self.assertEqual(vulns[0]["severity"], "CVSS:3.0/9.8")
+
+    def test_check_osv_vulnerabilities_with_fallback(self):
+        from unittest.mock import patch, MagicMock
+        import json
+        import sys
+
+        targets = [{"name": "lodash", "declared": "4.17.20", "installed": ["4.17.20"]}]
+        
+        batch_response = {
+            "results": [
+                {
+                    "vulns": [
+                        {
+                            "id": "GHSA-orphan-456",
+                            "summary": "Temporary summary",
+                            "details": "Temporary details",
+                            "severity": [{"type": "CVSS_V3", "score": "5.0"}]
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        url_calls = []
+
+        def mock_urlopen(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, 'full_url') else req
+            url_calls.append(url)
+            
+            mock_resp = MagicMock()
+            if "querybatch" in url:
+                mock_resp.read.return_value = json.dumps(batch_response).encode("utf-8")
+            elif "vulns/GHSA-orphan-456" in url:
+                fallback_response = {
+                    "id": "GHSA-orphan-456",
+                    "summary": "Fallback summary",
+                    "details": "Fallback details",
+                    "severity": [{"type": "CVSS_V3", "score": "7.5"}]
+                }
+                mock_resp.read.return_value = json.dumps(fallback_response).encode("utf-8")
+            else:
+                mock_resp.read.return_value = b"{}"
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        original_write = sys.stdout.write
+        has_deleted = False
+        def mock_stdout_write(text):
+            nonlocal has_deleted
+            if not has_deleted:
+                frame = sys._getframe()
+                while frame:
+                    if frame.f_code.co_name == "check_osv_vulnerabilities":
+                        locals_ = frame.f_locals
+                        if "hydrated_details" in locals_ and "GHSA-orphan-456" in locals_["hydrated_details"]:
+                            locals_["hydrated_details"].pop("GHSA-orphan-456", None)
+                            has_deleted = True
+                            break
+                    frame = frame.f_back
+            original_write(text)
+
+        with patch("kevlar.safe_urlopen", side_effect=mock_urlopen), \
+             patch("sys.stdout.write", side_effect=mock_stdout_write):
+            res = kevlar.check_osv_vulnerabilities(targets, "npm", max_workers=2)
+            
+            self.assertTrue(any("querybatch" in u for u in url_calls))
+            self.assertTrue(any("vulns/GHSA-orphan-456" in u for u in url_calls))
+            self.assertIn(("lodash", "4.17.20"), res)
+            vulns = res[("lodash", "4.17.20")]
+            self.assertEqual(len(vulns), 1)
+            self.assertEqual(vulns[0]["id"], "GHSA-orphan-456")
+            self.assertEqual(vulns[0]["summary"], "Fallback summary")
+            self.assertEqual(vulns[0]["severity"], "CVSS:3.0/7.5")
+
 if __name__ == "__main__":
     unittest.main()
