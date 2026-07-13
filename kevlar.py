@@ -1831,7 +1831,7 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
     for ids in package_to_vuln_ids.values():
         all_vuln_ids.update(ids)
         
-    orphaned_ids = sorted([vid for vid in all_vuln_ids if vid not in hydrated_details])
+    orphaned_ids = sorted([vid for vid in all_vuln_ids if vid not in hydrated_details or "summary" not in hydrated_details[vid]])
     
     if orphaned_ids:
         completed = 0
