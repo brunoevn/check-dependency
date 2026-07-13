@@ -6,3 +6,4 @@ __pycache__
 *report*.md
 *report*.sarif
 kevlar-suppressions.json
+scratch/
