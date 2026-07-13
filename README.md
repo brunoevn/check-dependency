@@ -41,7 +41,7 @@ Designed with a modular and extensible architecture, it supports checking direct
 - **High Performance Scanning**: Optimizes queries by requesting abbreviated metadata format headers from npm, and checks security advisories in a single `POST /v1/querybatch` request rather than one-by-one.
 - **Visual Console Reporting**: Displays findings in a neat, colorized table with summary statistics.
 - **Terminal Compatibility Fallback**: Automatically detects standard terminal encoding capabilities, switching seamlessly from Unicode characters to clean ASCII frames to prevent encoding crashes on Windows consoles.
-- **JSON, Markdown & HTML Exports**: Supports exporting results to formatted Markdown tables, raw JSON datasets, or interactive HTML dashboards.
+- **JSON, Markdown, HTML & SARIF Exports**: Supports exporting results to formatted Markdown tables, raw JSON datasets, interactive HTML dashboards, or standard SARIF v2.1.0 JSON reports.
 - **NPM Registry Checksum Auditing**: For Node.js (`npm`), cross-validates local lockfile integrity hashes against official registry metadata, flagging **Missing Checksums**, **Weak Algorithms** (SHA-1), and critical **Integrity Mismatches**.
 - **Advanced HTML Filtering Controls**: Interactive HTML dashboards include:
   - **AND Intersection Filtering**: Combine multiple filters (e.g., *Outdated* + *Vulnerable*) to show only packages matching all selected categories.
@@ -148,11 +148,13 @@ Add the `--all` (or `-a`) flag to scan the entire tree resolved in lockfiles/ass
 ### 4. Recursive Scan of Multiple Projects (`--scan-all`)
 To scan a directory recursively for multiple projects, automatically detect their technologies, and audit each of them:
 - **Scan all projects recursively**:
-  Add the `--scan-all` flag. When using `--scan-all`, you must also specify the report format using `--format` (choices: `html`, `json`, `both`).
+  Add the `--scan-all` flag. When using `--scan-all`, you must also specify the report format using `--format` (choices: `html`, `json`, `sarif`, `both`).
   ```powershell
   python kevlar.py --scan-all --format both --path ./my_workspace
   ```
   This will scan `./my_workspace`, audit all detected projects in real-time, print progress to the console, and automatically write separate, isolated report files named after their directory path (e.g. `report-my_api.html`, `report-frontend_app.json`).
+  
+  Choosing `sarif` as the format will output a single consolidated SARIF report (`report-consolidated.sarif`) containing all vulnerability, outdated, and deprecation findings from all scanned projects.
 - **Filter recursive search by technology**:
   You can filter the search to scan only projects of a specific technology (e.g. `pip`) by combining `--scan-all` with `--tech`:
   ```powershell
@@ -160,7 +162,7 @@ To scan a directory recursively for multiple projects, automatically detect thei
   ```
 
 ### 5. Export Report Files
-Output findings into structured Markdown (`.md`), raw JSON (`.json`), or interactive HTML dashboard (`.html`) files using `--output` (or `-o`):
+Output findings into structured Markdown (`.md`), raw JSON (`.json`), interactive HTML dashboard (`.html`), or standard SARIF v2.1.0 (`.sarif`) files using `--output` (or `-o`):
 - **For Markdown**:
   ```powershell
   python kevlar.py --tech nuget --path ./dotnet_project --vuls --output dependency_report.md
@@ -168,6 +170,10 @@ Output findings into structured Markdown (`.md`), raw JSON (`.json`), or interac
 - **For Interactive HTML**:
   ```powershell
   python kevlar.py --tech nuget --path ./dotnet_project --vuls --output dependency_report.html
+  ```
+- **For SARIF v2.1.0 JSON**:
+  ```powershell
+  python kevlar.py --tech nuget --path ./dotnet_project --vuls --output dependency_report.sarif
   ```
 
 ### 6. Show Up-to-Date Packages
@@ -193,10 +199,10 @@ python kevlar.py --update
 | `--vuls` | `-v` | `False` | Enable security vulnerability queries via Google OSV API. |
 | `--all` | `-a` | `False` | Scan all dependencies resolved in lockfile, rather than direct ones. |
 | `--concurrent` | `-c` | `10` | Number of concurrent network request threads to run. |
-| `--output` | `-o` | `None` | Path to export report file (detects `.json`, `.md`, and `.html` formats). Not allowed when using `--scan-all`. |
+| `--output` | `-o` | `None` | Path to export report file (detects `.json`, `.md`, `.html`, and `.sarif` formats). Not allowed when using `--scan-all`. |
 | `--show-all` | | `False` | Display all dependencies, even those up-to-date and secure. |
 | `--scan-all` | | `False` | Recursively scan the path for multiple projects, automatically detecting their technologies. |
-| `--format` | | `None` | Output report format when using `--scan-all`. Choices: `html`, `json`, `both`. |
+| `--format` | | `None` | Output report format when using `--scan-all`. Choices: `html`, `json`, `sarif`, `both`. |
 | `--fail-on-vulns` | | `None` | Break the build (exit code 1) on security issues. Accepts threshold limits (e.g., `"critical:2,high:4"`). |
 | `--fail-on-deprecated` | | `None` | Break the build (exit code 1) if deprecated packages are found. Optionally specify count threshold (e.g., `3`). |
 | `--fail-on-outdated` | | `None` | Break the build (exit code 1) if outdated packages are found. Optionally specify count threshold (e.g., `3`) or specific status levels (e.g., `major:2,minor:4`). |
