@@ -1922,6 +1922,15 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
                 "severity": severity,
                 "details": details or ""
             })
+        
+        severity_order = {
+            "critical": 4,
+            "high": 3,
+            "medium": 2,
+            "low": 1,
+            "unknown": 0
+        }
+        vuln_list.sort(key=lambda v: severity_order.get(get_severity_level(v), 0), reverse=True)
         package_to_vulns[(name, clean_ver)] = vuln_list
         
     return package_to_vulns
@@ -5140,15 +5149,30 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
     if vuls_enabled:
         vuls_to_print = []
         suppressed_to_print = []
+        severity_order = {
+            "critical": 4,
+            "high": 3,
+            "medium": 2,
+            "low": 1,
+            "unknown": 0
+        }
         for r in filtered_results:
             vuls_list = r.get("vulnerabilities", [])
             if vuls_list:
-                vuls_to_print.append((r["name"], r["installed"] if r["installed"] else r["declared"], vuls_list, r.get("required_by", [])))
+                sorted_v = sorted(vuls_list, key=lambda v: severity_order.get(get_severity_level(v), 0), reverse=True)
+                vuls_to_print.append((r["name"], r["installed"] if r["installed"] else r["declared"], sorted_v, r.get("required_by", [])))
             suppressed_list = r.get("suppressed_vulnerabilities", [])
             if suppressed_list:
                 suppressed_to_print.append((r["name"], r["installed"] if r["installed"] else r["declared"], suppressed_list, r.get("required_by", [])))
                 
         if vuls_to_print:
+            # Sort package groups by their maximum vulnerability severity descending, and alphabetically by package name ascending
+            vuls_to_print.sort(
+                key=lambda x: (
+                    -max(severity_order.get(get_severity_level(v), 0) for v in x[2]) if x[2] else 1,
+                    x[0].lower()
+                )
+            )
             print(f"\n{COLOR_BOLD}{COLOR_RED}{ICON_SHIELD} Security Vulnerabilities Details:{COLOR_RESET}")
             for name, ver, v_list, required_by in vuls_to_print:
                 parent_suffix = f" (via {', '.join(required_by)})" if required_by else ""
@@ -5573,12 +5597,27 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
             # Write detailed security section
             if vuls_enabled:
                 vuls_list_total = []
+                severity_order = {
+                    "critical": 4,
+                    "high": 3,
+                    "medium": 2,
+                    "low": 1,
+                    "unknown": 0
+                }
                 for r in results:
                     v_list = r.get("vulnerabilities", [])
                     if v_list:
-                        vuls_list_total.append((r["name"], r["installed"], v_list, r.get("required_by", [])))
+                        sorted_v = sorted(v_list, key=lambda v: severity_order.get(get_severity_level(v), 0), reverse=True)
+                        vuls_list_total.append((r["name"], r["installed"], sorted_v, r.get("required_by", [])))
                         
                 if vuls_list_total:
+                    # Sort package groups by their maximum vulnerability severity descending, and alphabetically by package name ascending
+                    vuls_list_total.sort(
+                        key=lambda x: (
+                            -max(severity_order.get(get_severity_level(v), 0) for v in x[2]) if x[2] else 1,
+                            x[0].lower()
+                        )
+                    )
                     f.write("\n## Security Vulnerabilities Details\n\n")
                     for name, ver, v_list, required_by in vuls_list_total:
                         parent_suffix = f" (via {', '.join(required_by)})" if required_by else ""
@@ -7714,9 +7753,26 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         elif not show_project_globally:
             project_path_header_html = f'<div>Projects: <strong>Multiple ({len(unique_project_paths)})</strong></div>'
 
+        # Sort results for HTML display: packages with higher severity vulnerabilities first
+        sorted_results = list(results)
+        if vuls_enabled:
+            severity_order = {
+                "critical": 4,
+                "high": 3,
+                "medium": 2,
+                "low": 1,
+                "unknown": 0
+            }
+            sorted_results.sort(
+                key=lambda r: (
+                    -max(severity_order.get(get_severity_level(v), 0) for v in r.get("vulnerabilities", [])) if r.get("vulnerabilities") else 1,
+                    r["name"].lower()
+                )
+            )
+
         # Build Packages Cards List
         package_cards_html = []
-        for i, r in enumerate(results):
+        for i, r in enumerate(sorted_results):
             name = r["name"]
             declared = r["declared"]
             installed = r["installed"]
@@ -7808,7 +7864,15 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
             vuln_details_html = []
             if is_vulnerable:
                 vuln_details_html.append('<div class="section-title">Active Vulnerabilities</div>')
-                for v in pkg_vulns:
+                severity_order = {
+                    "critical": 4,
+                    "high": 3,
+                    "medium": 2,
+                    "low": 1,
+                    "unknown": 0
+                }
+                sorted_pkg_vulns = sorted(pkg_vulns, key=lambda v: severity_order.get(get_severity_level(v), 0), reverse=True)
+                for v in sorted_pkg_vulns:
                     vid = v["id"]
                     severity = v["severity"]
                     summary = v["summary"]
