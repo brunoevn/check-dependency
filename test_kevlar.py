@@ -1595,5 +1595,38 @@ class TestKevlar(unittest.TestCase):
         with self.assertRaises(ValueError):
             kevlar.safe_urlopen(req)
 
+    def test_check_osv_vulnerabilities_chunking(self):
+        from unittest.mock import patch, MagicMock
+        import json
+
+        # Prepare 1500 targets
+        targets = []
+        for i in range(1500):
+            targets.append({
+                "name": f"package-{i}",
+                "declared": "1.0.0",
+                "installed": ["1.0.0"]
+            })
+
+        call_count = 0
+        def mock_urlopen_side_effect(req, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            data = req.data
+            req_json = json.loads(data.decode("utf-8"))
+            num_queries = len(req_json["queries"])
+            results = [{"vulns": []} for _ in range(num_queries)]
+            resp_bytes = json.dumps({"results": results}).encode("utf-8")
+            
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = resp_bytes
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        with patch("kevlar.safe_urlopen", side_effect=mock_urlopen_side_effect):
+            res = kevlar.check_osv_vulnerabilities(targets, "npm", max_workers=2)
+            self.assertEqual(call_count, 2)
+            self.assertEqual(res, {})
+
 if __name__ == "__main__":
     unittest.main()

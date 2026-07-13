@@ -1746,21 +1746,26 @@ def check_osv_vulnerabilities(targets, ecosystem, max_workers=10):
     if not queries:
         return {}
         
-    try:
-        url = URL_OSV_QUERYBATCH
-        req = urllib.request.Request(
-            url, 
-            data=json.dumps({"queries": queries}).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
-        )
-        
-        with safe_urlopen(req, timeout=15) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
+    results_list = []
+    chunk_size = 1000
+    for i in range(0, len(queries), chunk_size):
+        chunk_queries = queries[i:i + chunk_size]
+        try:
+            url = URL_OSV_QUERYBATCH
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps({"queries": chunk_queries}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
             
-        results_list = res_data.get("results", [])
-    except Exception as e:
-        print(f"{COLOR_RED}{ICON_ERROR} Failed to query OSV database: {e}{COLOR_RESET}")
-        return {}
+            with safe_urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                
+            results_list.extend(res_data.get("results", []))
+        except Exception as e:
+            print(f"{COLOR_RED}{ICON_ERROR} Failed to query OSV database batch: {e}{COLOR_RESET}")
+            # Extend results_list with empty results to maintain index alignment with query_mapping
+            results_list.extend([{"vulns": []}] * len(chunk_queries))
         
     # Process batch results and collect vulnerability IDs to fetch details for
     vuln_ids_to_hydrate = set()
