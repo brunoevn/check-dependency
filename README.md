@@ -21,7 +21,7 @@ Designed with a modular and extensible architecture, it supports checking direct
   - **Go (`go`)**: supporting `go.mod`.
   - **Rust (`rust`)**: supporting `Cargo.toml` and `Cargo.lock`.
   - **Ruby (`ruby`)**: supporting `Gemfile` and `Gemfile.lock`.
-- **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments.
+- **Outdated Package Detection**: Compares installed versions against the latest versions in registries, classifying updates into `Major`, `Minor`, and `Patch` increments, as well as composite status like `Minor/Major` and `Patch/Major` when both a safe same-major update and a major version update are available.
 - **Configuration Drift Validation**: Automatically detects installed packages that violate declared semver constraint ranges, flagging them with an `error` status and detailed troubleshoot diagnostics.
 - **Deprecation Warnings**: 
   - For `npm`: Extracts maintainer deprecation notices for exact installed versions.

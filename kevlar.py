@@ -44,7 +44,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -931,6 +931,22 @@ def classify_update(installed_str, latest_str):
     else:
         return "patch"
 
+def determine_update_type(installed_ver, latest_same_major, latest_absolute):
+    """Determines update type, returning minor-major or patch-major if both updates exist."""
+    if not latest_absolute or installed_ver == "0.0.0":
+        return "up-to-date"
+        
+    abs_type = classify_update(installed_ver, latest_absolute)
+    if abs_type == "major" and latest_same_major and latest_same_major != installed_ver:
+        clean_inst = re.sub(r'^[^\d]*', '', installed_ver).strip()
+        clean_same = re.sub(r'^[^\d]*', '', latest_same_major).strip()
+        if clean_inst and clean_same and clean_inst != clean_same:
+            same_major_type = classify_update(clean_inst, clean_same)
+            if same_major_type in ("minor", "patch"):
+                return f"{same_major_type}-major"
+                
+    return abs_type
+
 def find_latest_same_major(installed_ver, all_versions):
     """Finds the latest version in all_versions that shares the same major version as installed_ver.
     Returns:
@@ -1675,14 +1691,12 @@ def check_npm_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, latest_absolute)
+            update_type = determine_update_type(clean_ver, latest_same_major, latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 repo_url = resolve_npm_repo(name)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
@@ -2469,14 +2483,12 @@ def check_pypi_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, latest_absolute)
+            update_type = determine_update_type(clean_ver, latest_same_major, latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 urls = info.get("project_urls") or {}
                 raw_url = None
                 for key in ["Source", "Repository", "Code", "Homepage"]:
@@ -3095,14 +3107,12 @@ def check_nuget_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, latest_absolute)
+            update_type = determine_update_type(clean_ver, latest_same_major, latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 repo_url = resolve_nuget_repo(name, latest_absolute)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
@@ -3355,14 +3365,12 @@ def check_composer_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, latest_absolute)
+            update_type = determine_update_type(clean_ver, latest_same_major, latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 raw_url = None
                 for item in pkg_data:
                     v_str = item.get("version", "").lstrip("v")
@@ -3746,14 +3754,12 @@ def check_maven_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, latest_absolute)
+            update_type = determine_update_type(clean_ver, latest_same_major, latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 repo_url = resolve_maven_repo(successful_registry, group_path, artifact_id, latest_absolute)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
@@ -3997,14 +4003,13 @@ def check_go_package(target):
             clean_ver = ver_str.lstrip("v").split("+")[0] if ver_str else "0.0.0"
             clean_latest_absolute = latest_absolute.lstrip("v").split("+")[0] if latest_absolute else "0.0.0"
             
-            update_type = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                update_type = classify_update(clean_ver, clean_latest_absolute)
+            clean_latest_same = latest_same_major.lstrip("v").split("+")[0] if latest_same_major else "0.0.0"
+            update_type = determine_update_type(clean_ver, clean_latest_same, clean_latest_absolute)
                 
             repo_url = None
             compare_url = None
             releases_url = None
-            if update_type == "major":
+            if update_type in ("major", "minor-major", "patch-major"):
                 repo_url = resolve_go_repo(name)
                 if repo_url:
                     compare_url = get_compare_url(repo_url, clean_ver, latest_absolute)
@@ -4303,16 +4308,14 @@ def check_rust_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            status = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                status = classify_update(clean_ver, latest_absolute)
-                
+            status = determine_update_type(clean_ver, latest_same_major, latest_absolute)
+            
             is_deprecated = clean_ver in yanked_versions
             
             repo_url = None
             compare_url = None
             releases_url = None
-            if status == "major":
+            if status in ("major", "minor-major", "patch-major"):
                 raw_url = crate_info.get("repository") or crate_info.get("homepage")
                 repo_url = clean_repo_url(raw_url)
                 if repo_url:
@@ -4570,14 +4573,12 @@ def check_ruby_package(target):
             if not latest_same_major:
                 latest_same_major = latest_absolute
                 
-            status = "up-to-date"
-            if latest_absolute and clean_ver != "0.0.0":
-                status = classify_update(clean_ver, latest_absolute)
-                
+            status = determine_update_type(clean_ver, latest_same_major, latest_absolute)
+            
             repo_url = None
             compare_url = None
             releases_url = None
-            if status == "major":
+            if status in ("major", "minor-major", "patch-major"):
                 try:
                     url_gem = f"https://rubygems.org/api/v1/gems/{urllib.parse.quote(name)}.json"
                     req_g = urllib.request.Request(url_gem)
@@ -5142,6 +5143,14 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
             color = COLOR_CYAN
             status_display = "Verify Local"
             icon = "🔍"
+        elif status_str == "minor-major":
+            color = COLOR_RED
+            status_display = "Minor/Major"
+            icon = ICON_ERROR
+        elif status_str == "patch-major":
+            color = COLOR_RED
+            status_display = "Patch/Major"
+            icon = ICON_ERROR
             
         if r["deprecated"]:
             status_display = "Deprecated"
@@ -5197,7 +5206,7 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
     # Print Major Update Diffs section
     major_diffs_to_print = []
     for r in filtered_results:
-        if r["status"] == "major" and r.get("compare_url"):
+        if r["status"] in ("major", "minor-major", "patch-major") and r.get("compare_url"):
             major_diffs_to_print.append(f"  {COLOR_BOLD}{r['name']}{COLOR_RESET}: {COLOR_CYAN}{r['compare_url']}{COLOR_RESET}")
             
     if major_diffs_to_print:
@@ -5268,17 +5277,19 @@ def print_results_table(results, pkg_data, show_all, vuls_enabled=False):
 def print_summary(results, elapsed_time, vuls_enabled=False):
     """Prints checks run count and categorization breakdown."""
     total = len(results)
-    up_to_date = sum(1 for r in results if r["status"] == "up-to-date")
-    patch = sum(1 for r in results if r["status"] == "patch")
-    minor = sum(1 for r in results if r["status"] == "minor")
-    major = sum(1 for r in results if r["status"] == "major")
+    up_to_date = sum(1 for r in results if r["status"] in ("up-to-date", "local"))
+    patch = sum(1 for r in results if r["status"] in ("patch", "patch-major"))
+    minor = sum(1 for r in results if r["status"] in ("minor", "minor-major"))
+    major = sum(1 for r in results if r["status"] in ("major", "minor-major", "patch-major"))
     deprecated = sum(1 for r in results if r["deprecated"])
     errors = sum(1 for r in results if r["status"] == "error")
+    
+    outdated_total = sum(1 for r in results if r["status"] in ("patch", "minor", "major", "minor-major", "patch-major"))
     
     print(f"\n{COLOR_BOLD}{COLOR_CYAN}Summary Report:{COLOR_RESET}")
     print(f"  Checked:     {total} packages in {elapsed_time:.2f}s")
     print(f"  Up-to-date:  {COLOR_GREEN}{up_to_date}{COLOR_RESET}")
-    print(f"  Outdated:    {COLOR_YELLOW}{patch + minor + major}{COLOR_RESET} (Patch: {COLOR_CYAN}{patch}{COLOR_RESET}, Minor: {COLOR_YELLOW}{minor}{COLOR_RESET}, Major: {COLOR_RED}{major}{COLOR_RESET})")
+    print(f"  Outdated:    {COLOR_YELLOW}{outdated_total}{COLOR_RESET} (Patch: {COLOR_CYAN}{patch}{COLOR_RESET}, Minor: {COLOR_YELLOW}{minor}{COLOR_RESET}, Major: {COLOR_RED}{major}{COLOR_RESET})")
     if deprecated > 0:
         print(f"  Deprecated:  {COLOR_MAGENTA}{deprecated}{COLOR_RESET}")
     if errors > 0:
@@ -5562,17 +5573,18 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
             
             # Write summary
             total = len(results)
-            up_to_date = sum(1 for r in results if r["status"] == "up-to-date")
-            patch = sum(1 for r in results if r["status"] == "patch")
-            minor = sum(1 for r in results if r["status"] == "minor")
-            major = sum(1 for r in results if r["status"] == "major")
+            up_to_date = sum(1 for r in results if r["status"] in ("up-to-date", "local"))
+            patch = sum(1 for r in results if r["status"] in ("patch", "patch-major"))
+            minor = sum(1 for r in results if r["status"] in ("minor", "minor-major"))
+            major = sum(1 for r in results if r["status"] in ("major", "minor-major", "patch-major"))
             deprecated = sum(1 for r in results if r["deprecated"])
             errors = sum(1 for r in results if r["status"] == "error")
+            outdated_total = sum(1 for r in results if r["status"] in ("patch", "minor", "major", "minor-major", "patch-major"))
             
             f.write("## Summary\n\n")
             f.write(f"- **Total Checked**: {total}\n")
             f.write(f"- **Up-to-date**: {up_to_date}\n")
-            f.write(f"- **Outdated**: {patch + minor + major} (Patch: {patch}, Minor: {minor}, Major: {major})\n")
+            f.write(f"- **Outdated**: {outdated_total} (Patch: {patch}, Minor: {minor}, Major: {major})\n")
             if deprecated:
                 f.write(f"- **Deprecated**: {deprecated}\n")
             if errors:
@@ -5622,6 +5634,10 @@ def export_markdown_report(results, pkg_data, filepath, vuls_enabled=False):
                     status_display = f"❓ Error ({r['error']})"
                 elif status_str == "local":
                     status_display = "🔍 Verify Local"
+                elif status_str == "minor-major":
+                    status_display = "⚠️ Minor / ❌ Major Update"
+                elif status_str == "patch-major":
+                    status_display = "ℹ️ Patch / ❌ Major Update"
                     
                 notes_list = []
                 if r["deprecated"]:
@@ -7440,7 +7456,8 @@ class HTMLReportTemplateProvider:
                                 break;
                             }
                         } else if (cat === 'outdated') {
-                            if (!(checkedOutdated.includes(status) || (checkedOutdated.includes('major') && isDeprecated))) {
+                            const statusParts = status.split('-');
+                            if (!statusParts.some(p => checkedOutdated.includes(p)) && !(checkedOutdated.includes('major') && isDeprecated)) {
                                 matchesAll = false;
                                 break;
                             }
@@ -7696,8 +7713,8 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     try:
         # Calculate summary statistics
         total = len(results)
-        up_to_date = sum(1 for r in results if r["status"] == "up-to-date")
-        outdated = sum(1 for r in results if r["status"] in ("major", "minor", "patch"))
+        up_to_date = sum(1 for r in results if r["status"] in ("up-to-date", "local"))
+        outdated = sum(1 for r in results if r["status"] in ("major", "minor", "patch", "minor-major", "patch-major"))
         deprecated = sum(1 for r in results if r["deprecated"])
         errors = sum(1 for r in results if r["status"] == "error")
         
@@ -7920,6 +7937,12 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 badges.append('<span class="badge badge-info">Patch Update</span>')
             elif status == "local":
                 badges.append('<span class="badge badge-info">Verify Local</span>')
+            elif status == "minor-major":
+                badges.append('<span class="badge badge-warning">Minor Update</span>')
+                badges.append('<span class="badge badge-error">Major Update</span>')
+            elif status == "patch-major":
+                badges.append('<span class="badge badge-info">Patch Update</span>')
+                badges.append('<span class="badge badge-error">Major Update</span>')
                 
             if is_deprecated:
                 badges.append('<span class="badge badge-depr">Deprecated</span>')
@@ -8664,10 +8687,10 @@ def check_pipeline_failure_outdated(results, fail_config):
     if not fail_config:
         return False
         
-    major_count = sum(1 for r in results if r.get("status") == "major")
-    minor_count = sum(1 for r in results if r.get("status") == "minor")
-    patch_count = sum(1 for r in results if r.get("status") == "patch")
-    total_outdated = major_count + minor_count + patch_count
+    major_count = sum(1 for r in results if r.get("status") in ("major", "minor-major", "patch-major"))
+    minor_count = sum(1 for r in results if r.get("status") in ("minor", "minor-major"))
+    patch_count = sum(1 for r in results if r.get("status") in ("patch", "patch-major"))
+    total_outdated = sum(1 for r in results if r.get("status") in ("patch", "minor", "major", "minor-major", "patch-major"))
     
     if fail_config == "any":
         if total_outdated > 0:

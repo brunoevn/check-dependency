@@ -62,6 +62,16 @@ class TestKevlar(unittest.TestCase):
         self.assertEqual(kevlar.classify_update("1.2.3", "1.2.4"), "patch")
         self.assertEqual(kevlar.classify_update("1.2.3", "1.2.3.4"), "patch")
         
+    def test_determine_update_type(self):
+        # Only major update exists
+        self.assertEqual(kevlar.determine_update_type("1.2.3", "1.2.3", "2.0.0"), "major")
+        # Same major has minor update, and absolute has major
+        self.assertEqual(kevlar.determine_update_type("1.2.3", "1.3.5", "2.0.0"), "minor-major")
+        # Same major has patch update, and absolute has major
+        self.assertEqual(kevlar.determine_update_type("1.2.3", "1.2.9", "2.0.0"), "patch-major")
+        # Up to date
+        self.assertEqual(kevlar.determine_update_type("1.2.3", "1.2.3", "1.2.3"), "up-to-date")
+
     def test_cvss_calculations(self):
         # CVSS v2
         cvss2_vector = "AV:N/AC:L/Au:N/C:P/I:P/A:P"
