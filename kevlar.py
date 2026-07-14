@@ -6483,11 +6483,15 @@ class HTMLReportTemplateProvider:
             border: 1px solid var(--border-color);
             border-radius: 12px;
             overflow: hidden;
-            transition: border-color 0.2s ease;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         
         .package-card:hover {
-            border-color: var(--muted);
+            border-color: rgba(59, 130, 246, 0.5);
+            background-color: var(--card-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         }
         
         .card-header {
@@ -6553,31 +6557,32 @@ class HTMLReportTemplateProvider:
         .badge-project { background-color: rgba(55, 65, 81, 0.4); color: #9ca3af; border: 1px solid rgba(75, 85, 99, 0.4); }
         
         .badge-vuln-stats {
-            background-color: rgba(17, 24, 39, 0.6);
-            border: 1px solid #374151;
+            background-color: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #ef4444;
             display: inline-flex;
             align-items: center;
             gap: 4px;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-weight: 700;
         }
-        .badge-vuln-stats .divider {
-            color: #4b5563;
-            font-weight: normal;
-            margin: 0 1px;
+        .vuln-severity-pills {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
         }
-        .badge-vuln-stats .lbl-vuls {
-            color: #ef4444;
-            font-weight: bold;
+        .sev-pill {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 5px;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
         }
-        .badge-vuln-stats .sev-c { color: #f87171; font-weight: bold; }
-        .badge-vuln-stats .sev-h { color: #fb923c; font-weight: bold; }
-        .badge-vuln-stats .sev-m { color: #facc15; font-weight: bold; }
-        .badge-vuln-stats .sev-l { color: #38bdf8; font-weight: bold; }
-        .badge-vuln-stats .sev-u { color: #9ca3af; font-weight: bold; }
-        .badge-vuln-stats .muted {
-            opacity: 0.3;
-            font-weight: normal;
-        }
+        .sev-pill.sev-c { background-color: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .sev-pill.sev-h { background-color: rgba(245, 158, 11, 0.2); color: #fb923c; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .sev-pill.sev-m { background-color: rgba(234, 179, 8, 0.2); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.3); }
+        .sev-pill.sev-l { background-color: rgba(156, 163, 175, 0.2); color: #d1d5db; border: 1px solid rgba(156, 163, 175, 0.3); }
+        .sev-pill.sev-u { background-color: rgba(156, 163, 175, 0.15); color: #9ca3af; border: 1px solid rgba(156, 163, 175, 0.25); }
         
         .header-right {
             display: flex;
@@ -7268,7 +7273,7 @@ class HTMLReportTemplateProvider:
                     badges.push('<span class="badge badge-error">Error</span>');
                 } else if (status === "up-to-date") {
                     badges.push('<span class="badge badge-success">Up-to-date</span>');
-                } else if (status === "major") {
+                } else if (status.includes("major")) {
                     badges.push('<span class="badge badge-error">Major Update</span>');
                 } else if (status === "minor") {
                     badges.push('<span class="badge badge-warning">Minor Update</span>');
@@ -7276,12 +7281,6 @@ class HTMLReportTemplateProvider:
                     badges.push('<span class="badge badge-info">Patch Update</span>');
                 } else if (status === "local") {
                     badges.push('<span class="badge badge-info">Verify Local</span>');
-                } else if (status === "minor-major") {
-                    badges.push('<span class="badge badge-warning">Minor Update</span>');
-                    badges.push('<span class="badge badge-error">Major Update</span>');
-                } else if (status === "patch-major") {
-                    badges.push('<span class="badge badge-info">Patch Update</span>');
-                    badges.push('<span class="badge badge-error">Major Update</span>');
                 }
                 
                 if (is_deprecated) {
@@ -7326,26 +7325,24 @@ class HTMLReportTemplateProvider:
                         }
                     });
                     
-                    function get_class(cnt, base_class) {
-                        return cnt > 0 ? base_class : base_class + ' muted';
-                    }
-                    
                     const total_v = pkg_vulns.length;
                     const badge_html = 
                         '<span class="badge badge-vuln-stats" title="' + total_v + ' Vulnerabilities">' +
-                        '<span class="lbl-vuls">vuls ' + total_v + '</span>' +
-                        '<span class="divider">|</span>' +
-                        '<span class="' + get_class(c_cnt, 'sev-c') + '">C ' + c_cnt + '</span>' +
-                        '<span class="divider">|</span>' +
-                        '<span class="' + get_class(h_cnt, 'sev-h') + '">H ' + h_cnt + '</span>' +
-                        '<span class="divider">|</span>' +
-                        '<span class="' + get_class(m_cnt, 'sev-m') + '">M ' + m_cnt + '</span>' +
-                        '<span class="divider">|</span>' +
-                        '<span class="' + get_class(l_cnt, 'sev-l') + '">L ' + l_cnt + '</span>' +
-                        '<span class="divider">|</span>' +
-                        '<span class="' + get_class(u_cnt, 'sev-u') + '">U ' + u_cnt + '</span>' +
+                            '<svg class="icon-shield" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px; vertical-align: middle;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>' +
+                            '<span>' + total_v + ' vuls</span>' +
                         '</span>';
                     badges.push(badge_html);
+                    
+                    let pills = [];
+                    if (c_cnt > 0) pills.push('<span class="sev-pill sev-c">' + c_cnt + ' C</span>');
+                    if (h_cnt > 0) pills.push('<span class="sev-pill sev-h">' + h_cnt + ' H</span>');
+                    if (m_cnt > 0) pills.push('<span class="sev-pill sev-m">' + m_cnt + ' M</span>');
+                    if (l_cnt > 0) pills.push('<span class="sev-pill sev-l">' + l_cnt + ' L</span>');
+                    if (u_cnt > 0) pills.push('<span class="sev-pill sev-u">' + u_cnt + ' U</span>');
+                    
+                    if (pills.length > 0) {
+                        badges.push('<div class="vuln-severity-pills">' + pills.join('') + '</div>');
+                    }
                 }
                 
                 if (is_suppressed) {
