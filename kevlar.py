@@ -7253,7 +7253,7 @@ class HTMLReportTemplateProvider:
                 const installed_esc = escapeHtml(installed);
                 const latest_esc = escapeHtml(latest);
                 const status_esc = escapeHtml(status);
-                const error_esc = escapeHtml(error);
+                const error_esc = escapeHtml(error || '');
                 const dep_type_esc = escapeHtml(dep_type);
                 
                 let project_badge = "";
@@ -7389,14 +7389,8 @@ class HTMLReportTemplateProvider:
                         const sev_badge_class = 'sev-' + escapeHtml(sev_lower);
                         
                         let cvss_html = '';
-                        let sev_badge_html = '';
-                        if (severity.startsWith("CVSS")) {
-                            const cvss_val = severity.startsWith("CVSS:") || severity.startsWith("CVSS ") ? severity.slice(5).trim() : severity;
-                            cvss_html = '<div class="vuln-cvss" style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-family: monospace;"><strong>CVSS:</strong> ' + escapeHtml(cvss_val) + '</div>';
-                            sev_badge_html = '<span class="sev-badge ' + sev_badge_class + '">' + escapeHtml(sev_lower.toUpperCase()) + '</span>';
-                        } else {
-                            sev_badge_html = '<span class="sev-badge ' + sev_badge_class + '">' + severity_esc + '</span>';
-                        }
+                        // severity is now always a normalized text label (critical/high/medium/low/unknown)
+                        const sev_badge_html = '<span class="sev-badge ' + sev_badge_class + '">' + escapeHtml((sev_lower || 'unknown').toUpperCase()) + '</span>';
                         
                         vuln_details_html += 
                             '<div class="vuln-item">' +
@@ -7623,8 +7617,8 @@ class HTMLReportTemplateProvider:
             const name = r.name;
             const status = r.status;
             const is_deprecated = r.deprecated;
-            const is_vulnerable = r.vulnerabilities.length > 0;
             const pkg_vulns = r.vulnerabilities || [];
+            const is_vulnerable = pkg_vulns.length > 0;
             const required_by = r.required_by || [];
             
             let alert_types = [];
@@ -8160,6 +8154,57 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     def js_arg(val):
         return escape_html(escape_js_string(val))
 
+    # Helper: normalize OSV severity field to simple text level
+    def normalize_severity_to_text(severity_raw: str) -> str:
+        """Convert a CVSS vector string or plain text to critical/high/medium/low/unknown."""
+        if not severity_raw:
+            return "unknown"
+        s = severity_raw.lower()
+        # Plain text labels (already normalized, e.g. from database_specific.severity)
+        if s in ("critical", "high", "medium", "moderate", "low", "unknown"):
+            return "medium" if s == "moderate" else s
+        # Fallback: check if any known severity keywords appear as words
+        import re as _re
+        if _re.search(r'\bcritical\b', s):
+            return "critical"
+        if _re.search(r'\bhigh\b', s):
+            return "high"
+        if _re.search(r'\b(medium|moderate)\b', s):
+            return "medium"
+        if _re.search(r'\blow\b', s):
+            return "low"
+        # CVSS v3/v2 vector: parse C: (Confidentiality), I: (Integrity), A: (Availability) metrics
+        # Note: string is already lowercased, so metric values are h/l/n/m
+        # Use word-boundary-like anchors to avoid /VC: matching for /C:
+        def _metric(vector, key):
+            # Match /<exact_KEY>:<value> - key must be exact (e.g. /c: not /ac: or /vc:)
+            m = _re.search(r'/' + key.lower() + r'(?=[:/])([nhml])', vector)
+            if not m:
+                # Try pattern: /KEY:VALUE where KEY followed immediately by colon
+                m = _re.search(r'(?:^|/)' + key.lower() + r':([nhml])', vector)
+            return m.group(1) if m else 'n'
+        if 'cvss:3' in s or 'cvss:2' in s:
+            c = _metric(s, 'C'); i = _metric(s, 'I'); a = _metric(s, 'A')
+            sc = _metric(s, 'S')
+            if sc == 'c' and (c == 'h' or i == 'h'):
+                return "critical"
+            if c == 'h' or i == 'h' or a == 'h':
+                return "high"
+            if c == 'l' or i == 'l' or a == 'l':
+                return "medium"
+            return "low"
+        if 'cvss:4' in s:
+            # CVSS v4 metrics: VC (Vulnerable Confidentiality), VI, VA
+            vc = _metric(s, 'VC'); vi = _metric(s, 'VI'); va = _metric(s, 'VA')
+            if vc == 'h' and vi == 'h':
+                return "critical"
+            if vc == 'h' or vi == 'h' or va == 'h':
+                return "high"
+            if vc == 'l' or vi == 'l' or va == 'l':
+                return "medium"
+            return "low"
+        return "unknown"
+
     try:
         # Calculate summary statistics
         total = len(results)
@@ -8184,7 +8229,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         
         for r in results:
             for v in r.get("vulnerabilities", []):
-                level = get_severity_level(v)
+                level = normalize_severity_to_text(v.get("severity", ""))
                 if level == "critical":
                     critical += 1
                 elif level == "high":
@@ -8316,7 +8361,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 vid = v["id"]
                 if vid not in vulnerability_store:
                     vulnerability_store[vid] = {
-                        "severity": v.get("severity", "Unknown"),
+                        "severity": normalize_severity_to_text(v.get("severity", "")),
                         "summary": v.get("summary", ""),
                         "details": v.get("details", "")
                     }
@@ -8324,7 +8369,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 vid = sv["id"]
                 if vid not in vulnerability_store:
                     vulnerability_store[vid] = {
-                        "severity": sv.get("severity", "Unknown"),
+                        "severity": normalize_severity_to_text(sv.get("severity", "")),
                         "summary": sv.get("summary", ""),
                         "details": sv.get("details", "")
                     }
@@ -8387,6 +8432,8 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 "compare_url": r.get("compare_url"),
                 "releases_url": r.get("releases_url")
             }
+            # Remove keys with None, False, empty list, or empty string to optimize JSON payload size
+            pkg_record = {k: v for k, v in pkg_record.items() if v is not None and v is not False and v != "" and v != []}
             json_packages.append(pkg_record)
 
         # Sort results for JSON display: packages with higher severity vulnerabilities first
@@ -8399,7 +8446,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 "unknown": 0
             }
             def get_pkg_max_severity(pkg):
-                vuln_ids = pkg["vulnerabilities"]
+                vuln_ids = pkg.get("vulnerabilities", [])
                 sevs = [vulnerability_store[vid]["severity"] for vid in vuln_ids if vid in vulnerability_store]
                 if not sevs:
                     return 1
@@ -8408,8 +8455,8 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         else:
             json_packages.sort(key=lambda p: p["name"].lower())
 
-        escaped_packages_json = json.dumps(json_packages).replace("</script>", "<\\/script>")
-        escaped_vulns_json = json.dumps(vulnerability_store).replace("</script>", "<\\/script>")
+        escaped_packages_json = json.dumps(json_packages).replace("<", "\\u003c").replace(">", "\\u003e")
+        escaped_vulns_json = json.dumps(vulnerability_store).replace("<", "\\u003c").replace(">", "\\u003e")
 
         # HTML Master Template rendering
         template_str = HTMLReportTemplateProvider.get_template()
