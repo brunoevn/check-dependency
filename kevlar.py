@@ -1332,14 +1332,18 @@ def parse_pnpm_lock(filepath):
                         current_pkg, current_version = item[2]
                         break
                 
-                # Check transition out/in of the packages block at root level
-                if stripped.startswith("packages:"):
+                # Check transition out/in of the packages or snapshots block at root level
+                if stripped.startswith("packages:") or stripped.startswith("snapshots:"):
                     stack.append((indent, 'PACKAGES', None))
                     continue
                 
                 if current_state == 'PACKAGES':
                     # We are expecting package definitions as keys, e.g., '/direct-dep@1.0.1:'
-                    raw_pkg = stripped.rstrip(":").strip("'\"")
+                    # Remove trailing empty object if present, e.g. "key: {}" -> "key:"
+                    raw_line = stripped
+                    if raw_line.endswith("{}"):
+                        raw_line = raw_line[:-2].rstrip()
+                    raw_pkg = raw_line.rstrip(":").strip("'\"")
                     if raw_pkg.startswith("/"):
                         raw_pkg = raw_pkg[1:]
                     if "/" in raw_pkg and not raw_pkg.startswith("@"):
@@ -1350,17 +1354,15 @@ def parse_pnpm_lock(filepath):
                     pkg_name = None
                     version = None
                     
-                    if "@" in raw_pkg:
-                        if raw_pkg.startswith("@"):
-                            parts = raw_pkg[1:].rsplit("@", 1)
-                            if len(parts) == 2:
-                                pkg_name = "@" + parts[0]
-                                version = parts[1]
-                        else:
-                            parts = raw_pkg.rsplit("@", 1)
-                            if len(parts) == 2:
-                                pkg_name = parts[0]
-                                version = parts[1]
+                    # Robust separator '@' detection dividing package name from version/peer info
+                    if raw_pkg.startswith("@"):
+                        at_idx = raw_pkg.find("@", 1)
+                    else:
+                        at_idx = raw_pkg.find("@")
+                        
+                    if at_idx != -1:
+                        pkg_name = raw_pkg[:at_idx]
+                        version = raw_pkg[at_idx+1:]
                                 
                     if not pkg_name and "/" in raw_pkg:
                         parts = raw_pkg.rsplit("/", 1)

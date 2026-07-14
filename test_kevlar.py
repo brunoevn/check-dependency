@@ -904,6 +904,41 @@ class TestKevlar(unittest.TestCase):
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def test_parse_pnpm_lock_v9(self):
+        import tempfile
+        content = (
+            "lockfileVersion: '9.0'\n"
+            "packages:\n"
+            "  '@algolia/abtesting@1.1.0':\n"
+            "    resolution: {integrity: sha512-abc}\n"
+            "  '@angular/compiler-cli@20.3.26(@angular/compiler@20.3.26)(typescript@5.9.3)':\n"
+            "    resolution: {integrity: sha512-def}\n"
+            "  '@algolia/client-common@5.35.0':\n"
+            "    resolution: {integrity: sha512-ghi}\n"
+            "snapshots:\n"
+            "  '@algolia/abtesting@1.1.0':\n"
+            "    dependencies:\n"
+            "      '@algolia/client-common': 5.35.0\n"
+            "  '@angular/compiler-cli@20.3.26(@angular/compiler@20.3.26)(typescript@5.9.3)':\n"
+            "    dependencies:\n"
+            "      '@angular/compiler': 20.3.26\n"
+            "  '@algolia/client-common@5.35.0': {}\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".yaml", encoding="utf-8") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_pnpm_lock(tmp_path)
+            self.assertEqual(resolved.get("@algolia/abtesting"), ["1.1.0"])
+            self.assertEqual(resolved.get("@angular/compiler-cli"), ["20.3.26"])
+            self.assertEqual(resolved.get("@algolia/client-common"), ["5.35.0"])
+            
+            self.assertIn("@algolia/abtesting", parents.get("@algolia/client-common", []))
+            self.assertIn("@angular/compiler-cli", parents.get("@angular/compiler", []))
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
     def test_python_lock_parsers(self):
         import tempfile
         import json
