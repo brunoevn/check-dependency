@@ -6102,9 +6102,23 @@ def find_manifest_files(project_path, technology):
                 else:
                     if file == pattern:
                         manifest_files.append(os.path.join(root, file))
+                        
+    if technology == "nuget":
+        curr = os.path.abspath(project_path)
+        if os.path.isfile(curr):
+            curr = os.path.dirname(curr)
+        for _ in range(10):
+            props_file = os.path.join(curr, "Directory.Packages.props")
+            if os.path.exists(props_file) and props_file not in manifest_files:
+                manifest_files.append(props_file)
+            parent = os.path.dirname(curr)
+            if parent == curr:
+                break
+            curr = parent
+            
     return manifest_files
 
-def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ver, tech):
+def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ver, tech, package_name=None):
     """Generates remediation diff showing current vs suggested change."""
     try:
         with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -6151,6 +6165,12 @@ def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ve
                     target_text = quoted_vals[-1]
                     
     if line_idx_to_change is None:
+        return None
+
+    if target_text and package_name and target_text.lower().strip() == package_name.lower().strip():
+        target_text = None
+
+    if not target_text:
         return None
         
     match_prefix = ""
@@ -6235,15 +6255,11 @@ def populate_remediation_recommendations(results, default_project_path):
     for r in results:
         r["remediation"] = None
         
-        is_outdated = r.get("status") in ("major", "minor", "patch")
+        is_outdated = r.get("status") in ("major", "minor", "patch", "minor-major", "patch-major")
         has_vulns = bool(r.get("vulnerabilities"))
         is_depr = bool(r.get("deprecated"))
         
         if not (is_outdated or has_vulns or is_depr):
-            continue
-            
-        latest_ver = r.get("latest_absolute") or r.get("latest")
-        if not latest_ver:
             continue
             
         project_path = r.get("project_path") or default_project_path
@@ -6253,30 +6269,35 @@ def populate_remediation_recommendations(results, default_project_path):
             
         name = r.get("name")
         declared = r.get("declared")
+        installed = r.get("installed")
         
-        # 1. Handle Special Case for engine
+        # Resolve clean installed version string
+        clean_installed = installed[0] if (isinstance(installed, list) and installed) else installed
+        
+        latest_sm = r.get("latest_same_major")
+        latest_abs = r.get("latest_absolute") or r.get("latest")
+        
+        # If latest_same_major is identical to installed, there's no safe update.
+        if latest_sm == clean_installed:
+            latest_sm = None
+        # If latest_absolute is identical to latest_same_major, we don't need a separate major remediation.
+        if latest_abs == latest_sm:
+            latest_abs = None
+            
+        remediation_safe = None
+        remediation_major = None
+        
+        manifest_files = []
         if r.get("is_engine", False):
             package_json_path = os.path.join(project_path, "package.json")
             if os.path.exists(package_json_path):
-                try:
-                    with open(package_json_path, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
-                    for idx, line in enumerate(lines):
-                        if f'"{name}"' in line or '"engines"' in line:
-                            diff = generate_remediation_diff(package_json_path, idx + 1, declared, latest_ver, tech)
-                            if diff:
-                                r["remediation"] = diff
-                                break
-                except Exception:
-                    pass
-            continue
+                manifest_files = [package_json_path]
+        else:
+            manifest_files = find_manifest_files(project_path, tech)
             
-        # 2. General dependency matching
-        manifest_files = find_manifest_files(project_path, tech)
         if not manifest_files:
             continue
             
-        found = False
         for manifest_path in manifest_files:
             try:
                 with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -6284,15 +6305,40 @@ def populate_remediation_recommendations(results, default_project_path):
             except Exception:
                 continue
                 
+            found_line_idx = None
             for idx, line in enumerate(lines):
-                if match_line_for_dependency(line, name, tech):
-                    diff = generate_remediation_diff(manifest_path, idx + 1, declared, latest_ver, tech)
-                    if diff:
-                        r["remediation"] = diff
-                        found = True
-                        break
-            if found:
-                break
+                if r.get("is_engine", False):
+                    matched = f'"{name}"' in line or '"engines"' in line
+                else:
+                    matched = match_line_for_dependency(line, name, tech)
+                if matched:
+                    found_line_idx = idx + 1
+                    break
+                    
+            if found_line_idx is not None:
+                # Try to generate diffs for this manifest file
+                temp_safe = None
+                temp_major = None
+                if latest_sm:
+                    temp_safe = generate_remediation_diff(
+                        manifest_path, found_line_idx, declared, latest_sm, tech, name
+                    )
+                if latest_abs:
+                    temp_major = generate_remediation_diff(
+                        manifest_path, found_line_idx, declared, latest_abs, tech, name
+                    )
+                
+                # If we succeeded in generating at least one valid diff, we stop searching
+                if temp_safe or temp_major:
+                    remediation_safe = temp_safe
+                    remediation_major = temp_major
+                    break
+                
+        if remediation_safe or remediation_major:
+            r["remediation"] = {
+                "safe": remediation_safe,
+                "major": remediation_major
+            }
 
 class HTMLReportTemplateProvider:
     @staticmethod
@@ -7180,6 +7226,37 @@ class HTMLReportTemplateProvider:
             flex-grow: 1;
         }
         
+        .modal-tabs {
+            display: none;
+            gap: 8px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1px;
+        }
+        
+        .modal-tab {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            border-radius: 6px 6px 0 0;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+        
+        .modal-tab:hover {
+            color: var(--text-main);
+            background-color: var(--card-hover);
+        }
+        
+        .modal-tab.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+        
         .modal-info-bar {
             display: flex;
             align-items: center;
@@ -7815,7 +7892,8 @@ class HTMLReportTemplateProvider:
                 }
                 
                 let remediation_button_html = '';
-                if (r.remediation && is_direct) {
+                const has_remediation = r.remediation && (r.remediation.safe || r.remediation.major);
+                if (has_remediation && is_direct) {
                     remediation_button_html = 
                         '<div class="remediation-section">' +
                             '<div style="font-size: 12px; font-weight: 700; color: var(--success); margin-bottom: 8px;">Remediation:</div>' +
@@ -8333,14 +8411,14 @@ class HTMLReportTemplateProvider:
                        .replace(/'/g, '&#039;');
         }
         
-        function openRemediationModal(info) {
-            if (!info) return;
-            
-            document.getElementById('modal-filepath').textContent = info.display_path || (info.manifest_path + ':' + info.line_number);
+        let activeRemediationInfo = null;
+
+        function renderDiff(diff) {
+            if (!diff) return;
             
             const currentContainer = document.getElementById('modal-current-code');
             currentContainer.innerHTML = '';
-            info.current_code.forEach(line => {
+            diff.current_code.forEach(line => {
                 const lineDiv = document.createElement('div');
                 lineDiv.className = 'diff-line' + (line.is_changed ? ' removed' : '');
                 
@@ -8359,7 +8437,7 @@ class HTMLReportTemplateProvider:
             
             const suggestedContainer = document.getElementById('modal-suggested-code');
             suggestedContainer.innerHTML = '';
-            info.suggested_code.forEach(line => {
+            diff.suggested_code.forEach(line => {
                 const lineDiv = document.createElement('div');
                 lineDiv.className = 'diff-line' + (line.is_changed ? ' added' : '');
                 
@@ -8375,7 +8453,70 @@ class HTMLReportTemplateProvider:
                 lineDiv.appendChild(contentSpan);
                 suggestedContainer.appendChild(lineDiv);
             });
+        }
+
+        function switchRemediationTab(type) {
+            if (!activeRemediationInfo) return;
             
+            const safeTab = document.getElementById('tab-safe');
+            const majorTab = document.getElementById('tab-major');
+            
+            if (type === 'safe') {
+                safeTab.classList.add('active');
+                majorTab.classList.remove('active');
+                renderDiff(activeRemediationInfo.safe);
+            } else {
+                majorTab.classList.add('active');
+                safeTab.classList.remove('active');
+                renderDiff(activeRemediationInfo.major);
+            }
+        }
+
+        function openRemediationModal(info) {
+            if (!info) return;
+            
+            activeRemediationInfo = info;
+            
+            const firstValid = info.safe || info.major;
+            document.getElementById('modal-filepath').textContent = firstValid.display_path || (firstValid.manifest_path + ':' + firstValid.line_number);
+            
+            const tabsContainer = document.getElementById('modal-tabs-container');
+            const safeTab = document.getElementById('tab-safe');
+            const majorTab = document.getElementById('tab-major');
+            
+            if (info.safe && info.major) {
+                tabsContainer.style.display = 'flex';
+                safeTab.style.display = 'block';
+                majorTab.style.display = 'block';
+                switchRemediationTab('safe');
+            } else {
+                tabsContainer.style.display = 'none';
+                if (info.safe) {
+                    renderDiff(info.safe);
+                } else if (info.major) {
+                    renderDiff(info.major);
+                }
+            }
+            
+            // Synchronize scrolling between current and suggested code views
+            const leftScroll = document.getElementById('modal-current-code');
+            const rightScroll = document.getElementById('modal-suggested-code');
+            if (leftScroll && rightScroll) {
+                leftScroll.scrollLeft = 0;
+                leftScroll.scrollTop = 0;
+                rightScroll.scrollLeft = 0;
+                rightScroll.scrollTop = 0;
+                
+                leftScroll.onscroll = function() {
+                    rightScroll.scrollLeft = leftScroll.scrollLeft;
+                    rightScroll.scrollTop = leftScroll.scrollTop;
+                };
+                rightScroll.onscroll = function() {
+                    leftScroll.scrollLeft = rightScroll.scrollLeft;
+                    leftScroll.scrollTop = rightScroll.scrollTop;
+                };
+            }
+
             document.getElementById('remediation-modal').style.display = 'flex';
             document.getElementById('modal-backdrop').style.display = 'block';
             
@@ -8483,6 +8624,12 @@ $${tasksIntro}
                     <polyline points="14 2 14 8 20 8"></polyline>
                 </svg>
                 <span id="modal-filepath"></span>
+            </div>
+            
+            <!-- Tabs container -->
+            <div id="modal-tabs-container" class="modal-tabs" style="display: none;">
+                <button id="tab-safe" class="modal-tab" onclick="switchRemediationTab('safe')">Safe Update</button>
+                <button id="tab-major" class="modal-tab" onclick="switchRemediationTab('major')">Major Upgrade</button>
             </div>
             
             <div class="modal-diff-container">

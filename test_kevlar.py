@@ -1660,7 +1660,9 @@ class TestKevlar(unittest.TestCase):
             
             kevlar.populate_remediation_recommendations(results_for_remed, temp_dir)
             
-            remed = results_for_remed[0].get("remediation")
+            remed_dict = results_for_remed[0].get("remediation")
+            self.assertIsNotNone(remed_dict)
+            remed = remed_dict["major"] or remed_dict["safe"]
             self.assertIsNotNone(remed)
             self.assertEqual(os.path.basename(remed["manifest_path"]), "package.json")
             has_custom_engine = any("my-custom-engine" in item["html"] for item in remed["current_code"])
@@ -2185,6 +2187,65 @@ class TestKevlar(unittest.TestCase):
         self.assertEqual(res[0]["latest"], "Local")
         self.assertEqual(res[0]["status"], "local")
         self.assertIsNone(res[0]["error"])
+
+    def test_generate_remediation_diff_cpm_fallback(self):
+        import tempfile
+        import shutil
+        
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # 1. Project file reference without inline version (CPM active)
+            csproj_content = '<PackageReference Include="System.Text.Json" />\n'
+            csproj_path = os.path.join(temp_dir, "test.csproj")
+            with open(csproj_path, "w", encoding="utf-8") as f:
+                f.write(csproj_content)
+                
+            diff = kevlar.generate_remediation_diff(
+                csproj_path, 
+                line_index=1, 
+                declared_ver="8.0.0", 
+                latest_ver="10.0.10", 
+                tech="nuget", 
+                package_name="System.Text.Json"
+            )
+            self.assertIsNone(diff)
+            
+            # 2. Project file reference with inline version
+            csproj_with_ver = '<PackageReference Include="System.Text.Json" Version="8.0.0" />\n'
+            csproj_path_ver = os.path.join(temp_dir, "test_ver.csproj")
+            with open(csproj_path_ver, "w", encoding="utf-8") as f:
+                f.write(csproj_with_ver)
+                
+            diff_ver = kevlar.generate_remediation_diff(
+                csproj_path_ver, 
+                line_index=1, 
+                declared_ver="8.0.0", 
+                latest_ver="10.0.10", 
+                tech="nuget", 
+                package_name="System.Text.Json"
+            )
+            self.assertIsNotNone(diff_ver)
+            self.assertIn('<span class="diff-add-chunk">10.0.10</span>', diff_ver["suggested_code"][0]["html"])
+            self.assertIn("System.Text.Json", diff_ver["suggested_code"][0]["html"])
+            
+            # 3. Test find_manifest_files parent resolution for nuget props file
+            sub_dir = os.path.join(temp_dir, "src", "Project")
+            os.makedirs(sub_dir, exist_ok=True)
+            
+            sub_csproj = os.path.join(sub_dir, "test.csproj")
+            with open(sub_csproj, "w", encoding="utf-8") as f:
+                f.write(csproj_content)
+                
+            props_path = os.path.join(temp_dir, "Directory.Packages.props")
+            with open(props_path, "w", encoding="utf-8") as f:
+                f.write('<PackageVersion Include="System.Text.Json" Version="8.0.0" />\n')
+                
+            manifests = kevlar.find_manifest_files(sub_dir, "nuget")
+            self.assertIn(props_path, [os.path.abspath(m) for m in manifests])
+            self.assertIn(sub_csproj, [os.path.abspath(m) for m in manifests])
+            
+        finally:
+            shutil.rmtree(temp_dir)
 
 if __name__ == "__main__":
     unittest.main()
