@@ -133,10 +133,36 @@ class TestKevlar(unittest.TestCase):
         try:
             deps, parents = kevlar.parse_requirements_txt(temp_file)
             self.assertEqual(deps.get("requests"), "==2.25.1")
-            self.assertEqual(deps.get("django"), ">=2.0")
+            self.assertEqual(deps.get("django"), ">=2.0,<3.0")
             self.assertEqual(deps.get("gunicorn"), "==1!20.0.4")
             self.assertNotIn("-r", deps)
             self.assertEqual(parents.get("django"), ["web-framework"])
+        finally:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+
+    def test_requirements_txt_pep508_and_markers(self):
+        temp_file = "scratch_pep508_test.txt"
+        content = (
+            "requests @ https://github.com/psf/requests/archive/refs/tags/v2.26.0.tar.gz\n"
+            "urllib3[brotli]>=1.26.0; python_version >= '3.0'\n"
+            "legacy-lib==0.1.0; python_version < '2.0'\n"
+            "platform-specific==1.0.0; sys_platform == 'nonexistent-os'\n"
+            "matching-platform==1.0.0; sys_platform == '" + sys.platform + "'\n"
+        )
+        with open(temp_file, "w", encoding="utf-8") as f:
+            f.write(content)
+            
+        try:
+            deps, parents = kevlar.parse_requirements_txt(temp_file)
+            # URL dependency
+            self.assertEqual(deps.get("requests"), "@ https://github.com/psf/requests/archive/refs/tags/v2.26.0.tar.gz")
+            # Marker matching current environment should be present
+            self.assertEqual(deps.get("urllib3"), ">=1.26.0")
+            self.assertEqual(deps.get("matching-platform"), "==1.0.0")
+            # Marker not matching current environment should be absent
+            self.assertNotIn("legacy-lib", deps)
+            self.assertNotIn("platform-specific", deps)
         finally:
             if os.path.exists(temp_file):
                 os.remove(temp_file)

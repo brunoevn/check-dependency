@@ -2509,8 +2509,229 @@ def run_npm_checker(args):
 # PIP Checker Logic
 # ==============================================================================
 
+def parse_version_to_tuple_marker(v_str):
+    """Parses a version string into a tuple of integers for environment marker comparison."""
+    v_str = re.sub(r'^[^\d]+', '', v_str)
+    parts = []
+    for part in v_str.split('.'):
+        m = re.match(r'^(\d+)', part)
+        if m:
+            parts.append(int(m.group(1)))
+        else:
+            parts.append(0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+def compare_versions_marker(left, op, right):
+    """Compares two version strings based on the given operator for environment markers."""
+    left_t = parse_version_to_tuple_marker(str(left))
+    right_t = parse_version_to_tuple_marker(str(right))
+    
+    max_len = max(len(left_t), len(right_t))
+    left_t += (0,) * (max_len - len(left_t))
+    right_t += (0,) * (max_len - len(right_t))
+    
+    if op == '==' or op == '===':
+        return left_t == right_t
+    elif op == '!=':
+        return left_t != right_t
+    elif op == '<':
+        return left_t < right_t
+    elif op == '<=':
+        return left_t <= right_t
+    elif op == '>':
+        return left_t > right_t
+    elif op == '>=':
+        return left_t >= right_t
+    elif op == '~=':
+        if left_t < right_t:
+            return False
+        right_orig_parts = [int(p) for p in re.findall(r'\d+', str(right))]
+        if len(right_orig_parts) > 1:
+            upper_bound = list(right_t)
+            idx = len(right_orig_parts) - 2
+            if idx >= 0:
+                upper_bound[idx] += 1
+                for i in range(idx + 1, len(upper_bound)):
+                    upper_bound[i] = 0
+                return left_t < tuple(upper_bound)
+            else:
+                return left_t[0] == right_t[0]
+        else:
+            return left_t[0] == right_t[0]
+    return False
+
+def tokenize_marker(marker_str):
+    """Tokenizes a PEP 508 environment marker string."""
+    token_re = re.compile(
+        r'\s*('
+        r'\bnot\s+in\b|\bin\b|'
+        r'==|!=|<=|>=|<|>|===|~=|'
+        r'\band\b|\bor\b|\bnot\b|'
+        r'\(|\)|'
+        r'"[^"]*"|\'[^\']*\'|'
+        r'[a-zA-Z_][a-zA-Z0-9_]*'
+        r')\s*'
+    )
+    tokens = []
+    pos = 0
+    while pos < len(marker_str):
+        match = token_re.match(marker_str, pos)
+        if not match:
+            char = marker_str[pos]
+            if char.isspace():
+                pos += 1
+                continue
+            raise ValueError(f"Unexpected character in marker: {char} at position {pos}")
+        token = match.group(1)
+        tokens.append(token)
+        pos = match.end()
+    return tokens
+
+def parse_and_evaluate_marker(marker_str, env):
+    """Parses and evaluates a PEP 508 environment marker expression."""
+    tokens = tokenize_marker(marker_str)
+    if not tokens:
+        return True
+        
+    idx = [0]
+    
+    def peek():
+        if idx[0] < len(tokens):
+            return tokens[idx[0]]
+        return None
+        
+    def consume():
+        val = peek()
+        if val is not None:
+            idx[0] += 1
+        return val
+        
+    def parse_or():
+        left = parse_and()
+        while peek() == 'or':
+            consume()
+            right = parse_and()
+            left = left or right
+        return left
+        
+    def parse_and():
+        left = parse_not()
+        while peek() == 'and':
+            consume()
+            right = parse_not()
+            left = left and right
+        return left
+        
+    def parse_not():
+        if peek() == 'not':
+            consume()
+            val = parse_not()
+            return not val
+        return parse_comparison()
+        
+    def parse_comparison():
+        left_val, left_name = parse_primary()
+        op = peek()
+        if op in ('==', '!=', '<=', '>=', '<', '>', '===', '~=', 'in', 'not in'):
+            consume()
+            right_val, right_name = parse_primary()
+            return evaluate_comparison_op(left_val, left_name, op, right_val, right_name)
+        return bool(left_val)
+        
+    def parse_primary():
+        token = consume()
+        if token == '(':
+            val = parse_or()
+            if consume() != ')':
+                raise ValueError("Unmatched parenthesis in marker expression")
+            return (val, None)
+        if token is None:
+            raise ValueError("Unexpected end of expression")
+        if (token.startswith('"') and token.endswith('"')) or (token.startswith("'") and token.endswith("'")):
+            return (token[1:-1], None)
+        if token in env:
+            return (env[token], token)
+        return (token, None)
+        
+    result = parse_or()
+    if idx[0] < len(tokens):
+        raise ValueError(f"Trailing tokens in marker expression: {tokens[idx[0]:]}")
+    return result
+
+def evaluate_comparison_op(left_val, left_name, op, right_val, right_name):
+    """Evaluates a single comparison operation for markers."""
+    is_version = (
+        left_name in ('python_version', 'python_full_version', 'implementation_version', 'platform_version') or
+        right_name in ('python_version', 'python_full_version', 'implementation_version', 'platform_version')
+    )
+    
+    if op in ('in', 'not in'):
+        left_str = str(left_val)
+        right_str = str(right_val)
+        if op == 'in':
+            return left_str in right_str
+        else:
+            return left_str not in right_str
+            
+    if is_version and op in ('==', '!=', '<', '<=', '>', '>=', '~='):
+        return compare_versions_marker(left_val, op, right_val)
+        
+    left_str = str(left_val)
+    right_str = str(right_val)
+    if op == '==':
+        return left_str == right_str
+    elif op == '!=':
+        return left_str != right_str
+    elif op == '<':
+        return left_str < right_str
+    elif op == '<=':
+        return left_str <= right_str
+    elif op == '>':
+        return left_str > right_str
+    elif op == '>=':
+        return left_str >= right_str
+    elif op == '===':
+        return left_str == right_str
+        
+    return False
+
+def get_env_markers():
+    """Builds environment markers dictionary for the current interpreter."""
+    import platform
+    py_version_tuple = platform.python_version_tuple()
+    python_version = f"{py_version_tuple[0]}.{py_version_tuple[1]}"
+    python_full_version = platform.python_version()
+    
+    impl_ver = ""
+    if hasattr(sys, "implementation") and hasattr(sys.implementation, "version"):
+        v = sys.implementation.version
+        impl_ver = f"{v.major}.{v.minor}.{v.micro}"
+        if v.releaselevel != "final":
+            impl_ver += f"{v.releaselevel}{v.serial}"
+            
+    impl_name = ""
+    if hasattr(sys, "implementation") and hasattr(sys.implementation, "name"):
+        impl_name = sys.implementation.name
+        
+    return {
+        "os_name": os.name,
+        "sys_platform": sys.platform,
+        "platform_machine": platform.machine(),
+        "platform_python_implementation": platform.python_implementation(),
+        "platform_release": platform.release(),
+        "platform_system": platform.system(),
+        "platform_version": platform.version(),
+        "python_version": python_version,
+        "python_full_version": python_full_version,
+        "implementation_name": impl_name,
+        "implementation_version": impl_ver,
+        "extra": "",
+    }
+
 def parse_requirements_txt(filepath):
-    """Parses requirements.txt to extract dependencies and parent traces."""
+    """Parses requirements.txt to extract dependencies and parent traces, supporting PEP 508."""
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -2519,12 +2740,21 @@ def parse_requirements_txt(filepath):
         parents = {}
         
         last_pkg = None
-        pkg_re = re.compile(
-            r'^\s*([A-Za-z0-9_.-]+(?:\[[A-Za-z0-9_,.-]+\])?)\s*'
-            r'(?:(==|>=|<=|~=|!=|>|<|=)\s*([A-Za-z0-9_.!+*-]+)(?:\s*,\s*.*)?)?'
-        )
         
+        # Preprocess lines to merge continuation lines (ending with \)
+        merged_lines = []
+        continuation = ""
         for line in lines:
+            stripped = line.strip()
+            if stripped.endswith('\\'):
+                continuation += stripped[:-1].rstrip() + " "
+            else:
+                merged_lines.append(continuation + line)
+                continuation = ""
+        if continuation:
+            merged_lines.append(continuation)
+            
+        for line in merged_lines:
             stripped = line.strip()
             if not stripped:
                 continue
@@ -2552,26 +2782,55 @@ def parse_requirements_txt(filepath):
             if stripped_line.startswith("-"):
                 continue
                 
-            match = pkg_re.match(stripped_line)
-            if match:
-                pkg_name = match.group(1)
-                if "[" in pkg_name:
-                    pkg_name = pkg_name.split("[")[0]
-                    
-                op = match.group(2)
-                ver = match.group(3)
+            # Separate the requirement from the environment marker (separated by semicolon)
+            if ";" in stripped_line:
+                parts = stripped_line.split(";", 1)
+                req_part = parts[0].strip()
+                marker_part = parts[1].strip()
+            else:
+                req_part = stripped_line
+                marker_part = None
                 
-                version_spec = f"{op}{ver}" if op and ver else ""
-                dependencies[pkg_name] = version_spec or "*"
-                last_pkg = pkg_name
+            # Parse package name, optional extras, and specifier/URL
+            match = re.match(
+                r'^\s*([A-Za-z0-9_.-]+)(?:\s*\[\s*([A-Za-z0-9_,.-]+)\s*\])?\s*(.*)$',
+                req_part
+            )
+            if not match:
+                continue
                 
-                if comment.startswith("via"):
-                    parent_part = comment[3:].strip()
-                    for p in parent_part.split(","):
-                        p_clean = p.strip()
-                        if p_clean:
-                            parents.setdefault(pkg_name, set()).add(p_clean)
-                            
+            pkg_name = match.group(1)
+            extras = match.group(2)
+            rest = match.group(3).strip()
+            
+            # Evaluate markers if present
+            if marker_part:
+                try:
+                    env = get_env_markers()
+                    if not parse_and_evaluate_marker(marker_part, env):
+                        continue
+                except Exception as e:
+                    print(f"{COLOR_YELLOW}{ICON_WARN} Warning evaluating marker '{marker_part}': {e}{COLOR_RESET}")
+            
+            # Extract version specification or URL
+            if rest.startswith("@"):
+                url_part = rest[1:].strip()
+                version_spec = f"@ {url_part}"
+            elif rest:
+                version_spec = re.sub(r'([><=^~!]+)\s+', r'\1', rest)
+            else:
+                version_spec = "*"
+                
+            dependencies[pkg_name] = version_spec
+            last_pkg = pkg_name
+            
+            if comment.startswith("via"):
+                parent_part = comment[3:].strip()
+                for p in parent_part.split(","):
+                    p_clean = p.strip()
+                    if p_clean:
+                        parents.setdefault(pkg_name, set()).add(p_clean)
+                        
         return dependencies, {k: list(v) for k, v in parents.items()}
     except Exception as e:
         print(f"{COLOR_RED}{ICON_ERROR} Error reading requirements.txt: {e}{COLOR_RESET}")
@@ -5198,7 +5457,7 @@ def validate_configuration_drift(results):
         inst_str = str(installed).strip()
         
         # Skip checking if declared constraint is a git URL, local path, workspace, patch, catalog reference, etc.
-        if (decl_str.startswith(("git+", "git:", "http:", "https:", "ssh:", "file:", "workspace:", "patch:", "portal:", "link:", "catalog:")) 
+        if (decl_str.startswith(("@", "git+", "git:", "http:", "https:", "ssh:", "file:", "workspace:", "patch:", "portal:", "link:", "catalog:")) 
             or "github:" in decl_str.lower() 
             or decl_str.startswith((".", "/"))):
             continue
