@@ -17,6 +17,7 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 import time
 from datetime import datetime, date
 import xml.etree.ElementTree as ET
@@ -44,6 +45,9 @@ class SafeWriter:
 
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
+
+# Global lock to protect concurrent console writes (sys.stdout, sys.stderr, print)
+console_lock = threading.Lock()
 
 VERSION = "1.9.5"
 
@@ -724,8 +728,9 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
         futures = {executor.submit(check_func, t): t for t in targets}
         for future in as_completed(futures):
             completed += 1
-            sys.stdout.write(f"\r{label}: {completed}/{total}... ")
-            sys.stdout.flush()
+            with console_lock:
+                sys.stdout.write(f"\r{label}: {completed}/{total}... ")
+                sys.stdout.flush()
             try:
                 res = future.result()
                 if isinstance(res, list):
@@ -737,11 +742,12 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
                 name = target_pkg.get("name", "unknown")
                 sanitized_msg = _sanitize_error_message(e, name)
                 
-                if DEBUG_MODE:
-                    print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {e}{COLOR_RESET}")
-                    traceback.print_exc(file=sys.stdout)
-                else:
-                    print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {sanitized_msg}{COLOR_RESET}")
+                with console_lock:
+                    if DEBUG_MODE:
+                        print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {e}{COLOR_RESET}")
+                        traceback.print_exc(file=sys.stdout)
+                    else:
+                        print(f"\n{COLOR_RED}{ICON_ERROR} Error checking {name}: {sanitized_msg}{COLOR_RESET}")
                     
                 installed = target_pkg.get("installed", [])
                 versions_to_check = installed if installed else [target_pkg.get("declared")]
@@ -756,8 +762,9 @@ def _check_all_targets_unified(targets, check_func, label, max_workers):
                         "error": sanitized_msg
                     })
             
-    sys.stdout.write("\r\033[K")
-    sys.stdout.flush()
+    with console_lock:
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
     return results
 
 def _is_major_version_eol(major_version: str, schedule: dict, today_date: date) -> bool:
