@@ -1212,9 +1212,21 @@ class TestKevlar(unittest.TestCase):
         content = (
             "module github.com/test/mod\n"
             "go 1.18\n"
+            "\n"
             "require (\n"
             "    github.com/gin-gonic/gin v1.7.7\n"
             "    golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd // indirect\n"
+            ")\n"
+            "\n"
+            "require github.com/google/uuid v1.4.0 // indirect\n"
+            "require github.com/original/mod v1.0.0\n"
+            "require github.com/local/mod v2.0.0\n"
+            "require github.com/replaced/block v3.0.0\n"
+            "\n"
+            "replace github.com/original/mod => github.com/fork/mod v1.1.0\n"
+            "replace github.com/local/mod => ./local/path\n"
+            "replace (\n"
+            "    github.com/replaced/block v3.0.0 => github.com/fork/block v3.1.0\n"
             ")\n"
         )
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".mod") as tmp:
@@ -1224,6 +1236,160 @@ class TestKevlar(unittest.TestCase):
             resolved, indirects = kevlar.parse_go_mod(tmp_path)
             self.assertEqual(resolved.get("github.com/gin-gonic/gin"), "v1.7.7")
             self.assertEqual(indirects.get("golang.org/x/crypto"), "v0.0.0-20220315160706-3147a52a75dd")
+            self.assertEqual(indirects.get("github.com/google/uuid"), "v1.4.0")
+            self.assertEqual(resolved.get("github.com/fork/mod"), "v1.1.0")
+            self.assertNotIn("github.com/original/mod", resolved)
+            self.assertEqual(resolved.get("github.com/fork/block"), "v3.1.0")
+            self.assertNotIn("github.com/replaced/block", resolved)
+            self.assertEqual(resolved.get("github.com/local/mod"), "v2.0.0")
+        finally:
+            os.remove(tmp_path)
+
+    def test_parse_go_mod_edge_cases(self):
+        import tempfile
+        content = (
+            "module example.com/my-module\n"
+            "go 1.21\n"
+            "toolchain go1.21.3\n"
+            "\n"
+            "// Comment before require block\n"
+            "require (\n"
+            "    example.com/pseudo-pkg v0.0.0-20230101000000-abcdef123456 // indirect\n"
+            "    example.com/specific-replaced-pkg v1.0.0\n"
+            ")\n"
+            "\n"
+            "exclude example.com/excluded-pkg v2.0.0\n"
+            "\n"
+            "replace example.com/specific-replaced-pkg v1.0.0 => example.com/specific-replaced-pkg v1.0.1\n"
+            "replace (\n"
+            "    example.com/another-replaced-pkg => example.com/another-fork v2.0.0-rc1\n"
+            ")\n"
+            "require example.com/another-replaced-pkg v1.5.0\n"
+            "require (\n"
+            "    // Empty require block test\n"
+            ")\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".mod") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            resolved, indirects = kevlar.parse_go_mod(tmp_path)
+            self.assertEqual(indirects.get("example.com/pseudo-pkg"), "v0.0.0-20230101000000-abcdef123456")
+            self.assertEqual(resolved.get("example.com/specific-replaced-pkg"), "v1.0.1")
+            self.assertEqual(resolved.get("example.com/another-fork"), "v2.0.0-rc1")
+            self.assertNotIn("example.com/another-replaced-pkg", resolved)
+        finally:
+            os.remove(tmp_path)
+
+    def test_parser_advanced_edge_cases(self):
+        import tempfile
+        import json
+        
+        # 1. Yarn Multi-specifiers and Scoped Packages
+        yarn_content = (
+            "\"@babel/core@npm:^7.12.3, @babel/core@npm:^7.12.9\":\n"
+            "  version: 7.12.9\n"
+            "  dependencies:\n"
+            "    \"@babel/code-frame\": \"npm:^7.10.4\"\n"
+            "\n"
+            "lodash@^4.17.20, lodash@^4.17.21:\n"
+            "  version \"4.17.21\"\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock", encoding="utf-8") as tmp:
+            tmp.write(yarn_content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_yarn_lock(tmp_path)
+            self.assertEqual(resolved.get("@babel/core"), ["7.12.9"])
+            self.assertEqual(resolved.get("lodash"), ["4.17.21"])
+            self.assertIn("@babel/core", parents.get("@babel/code-frame", []))
+        finally:
+            os.remove(tmp_path)
+            
+        # 2. PNPM Peer Dependency Brackets
+        pnpm_content = (
+            "lockfileVersion: '6.0'\n"
+            "packages:\n"
+            "  /foo@1.0.0(bar@2.0.0)(baz@3.0.0):\n"
+            "    resolution: {integrity: sha512-abc}\n"
+            "    dependencies:\n"
+            "      bar: 2.0.0\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".yaml", encoding="utf-8") as tmp:
+            tmp.write(pnpm_content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents, integrity = kevlar.parse_pnpm_lock(tmp_path)
+            self.assertEqual(resolved.get("foo"), ["1.0.0"])
+        finally:
+            os.remove(tmp_path)
+
+        # 3. Gemfile.lock Multiple Sections (GEM, GIT, PATH)
+        gemfile_content = (
+            "GIT\n"
+            "  remote: https://github.com/rails/rails.git\n"
+            "  revision: 1234abcd\n"
+            "  specs:\n"
+            "    rails (6.1.4)\n"
+            "      activesupport (= 6.1.4)\n"
+            "\n"
+            "GEM\n"
+            "  remote: https://rubygems.org/\n"
+            "  specs:\n"
+            "    activesupport (6.1.4)\n"
+            "    json (2.5.1)\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lock") as tmp:
+            tmp.write(gemfile_content)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_gemfile_lock(tmp_path)
+            self.assertEqual(resolved.get("rails"), "6.1.4")
+            self.assertEqual(resolved.get("activesupport"), "6.1.4")
+            self.assertEqual(resolved.get("json"), "2.5.1")
+            self.assertIn("rails", parents.get("activesupport", []))
+        finally:
+            os.remove(tmp_path)
+
+        # 4. Gradle Lockfile Multi-Configurations
+        gradle_content = (
+            "# Gradle lockfile\n"
+            "org.slf4j:slf4j-api:1.7.30=compileClasspath,runtimeClasspath\n"
+            "org.apache.commons:commons-lang3:3.12.0=annotationProcessor,compileClasspath,runtimeClasspath\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".lockfile") as tmp:
+            tmp.write(gradle_content)
+            tmp_path = tmp.name
+        try:
+            resolved = kevlar.parse_gradle_lockfile(tmp_path)
+            self.assertEqual(resolved.get("org.slf4j:slf4j-api"), "1.7.30")
+            self.assertEqual(resolved.get("org.apache.commons:commons-lang3"), "3.12.0")
+        finally:
+            os.remove(tmp_path)
+
+        # 5. Composer lock skipping platform requirements
+        composer_data = {
+            "packages": [
+                {
+                    "name": "guzzlehttp/guzzle",
+                    "version": "v7.4.1",
+                    "require": {
+                        "php": "^7.2.5 || ^8.0",
+                        "ext-json": "*",
+                        "psr/http-client": "^1.0"
+                    }
+                }
+            ]
+        }
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as tmp:
+            json.dump(composer_data, tmp)
+            tmp_path = tmp.name
+        try:
+            resolved, parents = kevlar.parse_composer_lock(tmp_path)
+            self.assertEqual(resolved.get("guzzlehttp/guzzle"), ["7.4.1"])
+            self.assertIn("guzzlehttp/guzzle", parents.get("psr/http-client", []))
+            self.assertNotIn("php", parents)
+            self.assertNotIn("ext-json", parents)
         finally:
             os.remove(tmp_path)
 

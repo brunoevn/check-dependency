@@ -4081,51 +4081,93 @@ def escape_go_module(name):
     return escaped
 
 def parse_go_mod(filepath):
-    """Parses go.mod for direct and indirect dependencies."""
+    """Parses go.mod for direct and indirect dependencies with replace support."""
     dependencies = {}
     devDependencies = {}
+    
+    if not filepath or not os.path.exists(filepath):
+        return dependencies, devDependencies
+        
+    raw_reqs = []
+    replacements = {}
+    replacements_ver = {}
     
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
             
         in_require_block = False
-        single_req_pat = re.compile(r'^\s*require\s+([^\s]+)\s+([^\s]+)(?:\s+//\s*(indirect))?\s*$')
-        block_req_pat = re.compile(r'^\s*([^\s]+)\s+([^\s]+)(?:\s+//\s*(indirect))?\s*$')
         
         for line in lines:
-            line_strip = line.strip()
-            if not line_strip or line_strip.startswith("//"):
+            line_clean = line.strip()
+            if not line_clean or line_clean.startswith("//"):
                 continue
                 
-            if line_strip == "require (":
+            is_indirect = False
+            if "//" in line_clean:
+                parts = line_clean.split("//", 1)
+                line_content = parts[0].strip()
+                comment = parts[1].strip()
+                if "indirect" in comment.split():
+                    is_indirect = True
+            else:
+                line_content = line_clean
+                
+            if not line_content:
+                continue
+                
+            if line_content.startswith("require") and line_content.endswith("("):
                 in_require_block = True
                 continue
-            elif line_strip == ")":
+            elif in_require_block and line_content == ")":
                 in_require_block = False
                 continue
                 
+            if "=>" in line_content:
+                left, right = line_content.split("=>", 1)
+                left_parts = left.strip().split()
+                if left_parts and left_parts[0] == "replace":
+                    left_parts = left_parts[1:]
+                    
+                right_parts = right.strip().split()
+                if len(right_parts) == 2 and left_parts:
+                    new_path = right_parts[0]
+                    new_version = right_parts[1]
+                    if not (new_path.startswith('.') or new_path.startswith('/') or new_path.startswith('\\')):
+                        if len(left_parts) == 1:
+                            replacements[left_parts[0]] = (new_path, new_version)
+                        elif len(left_parts) == 2:
+                            replacements_ver[(left_parts[0], left_parts[1])] = (new_path, new_version)
+                continue
+                
             if in_require_block:
-                m = block_req_pat.match(line_strip)
-                if m:
-                    pkg = m.group(1)
-                    ver = m.group(2)
-                    is_indirect = m.group(3) == "indirect"
-                    if is_indirect:
-                        devDependencies[pkg] = ver
-                    else:
-                        dependencies[pkg] = ver
+                req_parts = line_content.split()
+                if len(req_parts) >= 2:
+                    pkg = req_parts[0]
+                    ver = req_parts[1]
+                    raw_reqs.append((pkg, ver, is_indirect))
             else:
-                m = single_req_pat.match(line_strip)
-                if m:
-                    pkg = m.group(1)
-                    ver = m.group(2)
-                    is_indirect = m.group(3) == "indirect"
-                    if is_indirect:
-                        devDependencies[pkg] = ver
-                    else:
-                        dependencies[pkg] = ver
+                if line_content.startswith("require"):
+                    req_parts = line_content.split()
+                    if len(req_parts) >= 3:
+                        pkg = req_parts[1]
+                        ver = req_parts[2]
+                        raw_reqs.append((pkg, ver, is_indirect))
                         
+        for pkg, ver, is_indir in raw_reqs:
+            final_pkg = pkg
+            final_ver = ver
+            
+            if (pkg, ver) in replacements_ver:
+                final_pkg, final_ver = replacements_ver[(pkg, ver)]
+            elif pkg in replacements:
+                final_pkg, final_ver = replacements[pkg]
+                
+            if is_indir:
+                devDependencies[final_pkg] = final_ver
+            else:
+                dependencies[final_pkg] = final_ver
+                
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning parsing go.mod: {e}{COLOR_RESET}")
         
