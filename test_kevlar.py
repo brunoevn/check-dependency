@@ -600,6 +600,27 @@ class TestKevlar(unittest.TestCase):
         self.assertFalse(kevlar.check_semver_satisfies("2.1.0", ">=1.2.3,<=2.0.0 || >=2.4.0,<=3.0.0"))
         self.assertTrue(kevlar.check_semver_satisfies("3.0.0", ">=1.2.3,<=2.0.0 || >=2.4.0,<=3.0.0"))
 
+        # Caret operator tests
+        self.assertTrue(kevlar.check_semver_satisfies("0.5.0", "^0"))
+        self.assertTrue(kevlar.check_semver_satisfies("0.5.0", "^0.x"))
+        self.assertTrue(kevlar.check_semver_satisfies("0.5.0", "^0.*"))
+        self.assertTrue(kevlar.check_semver_satisfies("0.2.7", "^0.2"))
+        self.assertFalse(kevlar.check_semver_satisfies("0.5.0", "^0.2"))
+        self.assertFalse(kevlar.check_semver_satisfies("0.0.3", "^0.0.x"))
+        self.assertFalse(kevlar.check_semver_satisfies("0.0.5", "^0.0.x"))
+        self.assertTrue(kevlar.check_semver_satisfies("0.0.3", "^0.0.3"))
+        self.assertFalse(kevlar.check_semver_satisfies("0.0.5", "^0.0.3"))
+        self.assertTrue(kevlar.check_semver_satisfies("1.2.7", "^1.2.3"))
+        self.assertFalse(kevlar.check_semver_satisfies("2.0.0", "^1.2.3"))
+
+        # Tilde operator tests
+        self.assertTrue(kevlar.check_semver_satisfies("1.2.7", "~1.2"))
+        self.assertFalse(kevlar.check_semver_satisfies("1.3.0", "~1.2"))
+        self.assertTrue(kevlar.check_semver_satisfies("1.2.7", "~1.2.3"))
+        self.assertFalse(kevlar.check_semver_satisfies("1.3.0", "~1.2.3"))
+        self.assertTrue(kevlar.check_semver_satisfies("1.8.0", "~1"))
+        self.assertFalse(kevlar.check_semver_satisfies("2.0.0", "~1"))
+
     def test_configuration_drift_validation(self):
         results = [
             # 1. Matching constraint

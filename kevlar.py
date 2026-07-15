@@ -645,7 +645,7 @@ def satisfy_term(version_str, term):
         
         _, v_maj, v_min, v_pat, _, _ = parse_semver(version_str)
         
-        if ver_part.endswith(".x") or ver_part.endswith(".*"):
+        if (ver_part.endswith(".x") or ver_part.endswith(".*")) and op not in ("^", "~"):
             parts = ver_part.split(".")
             try:
                 if len(parts) == 2:
@@ -686,14 +686,47 @@ def satisfy_term(version_str, term):
                 return False
             if t_maj > 0:
                 return v_maj == t_maj
-            elif t_min > 0:
-                return v_maj == 0 and v_min == t_min
-            else:
+            
+            # Zero series caret evaluation
+            clean_ver = ver_part.strip().lower()
+            if clean_ver.startswith("v"):
+                clean_ver = clean_ver[1:]
+            if "+" in clean_ver:
+                clean_ver = clean_ver.split("+", 1)[0]
+            if "-" in clean_ver:
+                clean_ver = clean_ver.split("-", 1)[0]
+                
+            parts = [p.strip() for p in clean_ver.split(".") if p.strip()]
+            
+            is_wildcard_minor = (len(parts) >= 2 and parts[1] in ("x", "*"))
+            is_only_major_zero = (len(parts) == 1 and parts[0] == "0")
+            if is_only_major_zero or is_wildcard_minor:
+                return v_maj == 0
+                
+            is_wildcard_patch = (len(parts) >= 3 and parts[0] == "0" and parts[1] == "0" and parts[2] in ("x", "*"))
+            if is_wildcard_patch:
                 return v_maj == 0 and v_min == 0 and v_pat == t_pat
+                
+            if t_min > 0:
+                return v_maj == 0 and v_min == t_min
+                
+            return v_maj == 0 and v_min == 0 and v_pat == t_pat
+            
         elif op == "~":
-            parts_count = len(ver_part.split("."))
             if compare_versions(version_str, ver_part) < 0:
                 return False
+                
+            clean_ver = ver_part.strip().lower()
+            if clean_ver.startswith("v"):
+                clean_ver = clean_ver[1:]
+            if "+" in clean_ver:
+                clean_ver = clean_ver.split("+", 1)[0]
+            if "-" in clean_ver:
+                clean_ver = clean_ver.split("-", 1)[0]
+                
+            parts = [p.strip() for p in clean_ver.split(".") if p.strip() and p.strip() not in ("x", "*")]
+            parts_count = len(parts)
+            
             if parts_count >= 2:
                 return v_maj == t_maj and v_min == t_min
             else:
