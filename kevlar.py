@@ -26,6 +26,7 @@ import xml.parsers.expat
 import traceback
 import unicodedata
 import ctypes
+import tomllib
 
 # Safe terminal output wrapping to prevent UnicodeEncodeError on Windows
 class SafeWriter:
@@ -2806,6 +2807,31 @@ def parse_pipfile_lock(filepath):
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading Pipfile.lock: {e}{COLOR_RESET}")
         return {}, {}
 
+def parse_pep508(dep_string):
+    """Parses a PEP 508 dependency string.
+    Returns:
+        tuple: (package_name, version_specifier) or (None, None)
+    """
+    if not isinstance(dep_string, str):
+        return None, None
+    req_part = dep_string.split(';', 1)[0].strip()
+    if not req_part:
+        return None, None
+    match = re.match(r'^([a-zA-Z0-9\-_\.]+)(.*)$', req_part)
+    if not match:
+        return None, None
+    name = match.group(1)
+    rest = match.group(2).strip()
+    if rest.startswith('['):
+        extra_match = re.match(r'^\[[^\]]*\](.*)$', rest)
+        if extra_match:
+            rest = extra_match.group(1).strip()
+    if rest.startswith('(') and rest.endswith(')'):
+        rest = rest[1:-1].strip()
+    rest = re.sub(r'([><=^~!]+)\s+', r'\1', rest)
+    version_spec = rest if rest else "*"
+    return name, version_spec
+
 def parse_pyproject_toml(filepath):
     """Parses pyproject.toml to extract direct dependencies.
     Returns:
@@ -2813,52 +2839,110 @@ def parse_pyproject_toml(filepath):
     """
     dependencies = {}
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        with open(filepath, "rb") as f:
+            data = tomllib.load(f)
             
-        in_poetry_deps = False
-        in_pep621_deps = False
-        
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
+        def process_poetry_deps(deps_dict):
+            if not isinstance(deps_dict, dict):
+                return
+            for k, v in deps_dict.items():
+                if k.lower() == "python":
+                    continue
+                if isinstance(v, str):
+                    dependencies[k] = v
+                elif isinstance(v, dict):
+                    ver = v.get("version")
+                    dependencies[k] = ver if isinstance(ver, str) else "*"
+
+        # 1. PEP 621 dependencies
+        project = data.get("project", {})
+        if isinstance(project, dict):
+            proj_deps = project.get("dependencies")
+            if isinstance(proj_deps, list):
+                for dep in proj_deps:
+                    name, spec = parse_pep508(dep)
+                    if name:
+                        dependencies[name] = spec
+            opt_deps = project.get("optional-dependencies")
+            if isinstance(opt_deps, dict):
+                for group_list in opt_deps.values():
+                    if isinstance(group_list, list):
+                        for dep in group_list:
+                            name, spec = parse_pep508(dep)
+                            if name:
+                                dependencies[name] = spec
+            elif isinstance(opt_deps, list):
+                for group_item in opt_deps:
+                    if isinstance(group_item, dict):
+                        for group_list in group_item.values():
+                            if isinstance(group_list, list):
+                                for dep in group_list:
+                                    name, spec = parse_pep508(dep)
+                                    if name:
+                                        dependencies[name] = spec
+
+        # 2. Poetry
+        tool = data.get("tool", {})
+        if isinstance(tool, dict):
+            poetry = tool.get("poetry", {})
+            if isinstance(poetry, dict):
+                process_poetry_deps(poetry.get("dependencies"))
                 
-            if stripped.startswith("[tool.poetry.dependencies]"):
-                in_poetry_deps = True
-                in_pep621_deps = False
-                continue
-            elif stripped.startswith("dependencies = ["):
-                in_pep621_deps = True
-                in_poetry_deps = False
-                continue
-            elif stripped.startswith("["):
-                in_poetry_deps = False
-                in_pep621_deps = False
-                
-            if in_poetry_deps:
-                if "=" in stripped:
-                    name = stripped.split("=", 1)[0].strip().strip('"').strip("'")
-                    val = stripped.split("=", 1)[1].strip()
-                    if name != "python":
-                        if val.startswith("{"):
-                            ver_match = re.search(r'version\s*=\s*["\']([^"\']+)["\']', val)
-                            version = ver_match.group(1) if ver_match else "*"
-                        else:
-                            version = val.strip('"').strip("'")
-                        dependencies[name] = version
-            elif in_pep621_deps:
-                if stripped == "]":
-                    in_pep621_deps = False
-                else:
-                    item = stripped.rstrip(",").strip().strip('"').strip("'")
-                    if item:
-                        match = re.match(r'^([a-zA-Z0-9\-_.]+)(.*)$', item)
-                        if match:
-                            name = match.group(1)
-                            spec = match.group(2).strip()
-                            dependencies[name] = spec if spec else "*"
+                group = poetry.get("group", {})
+                if isinstance(group, dict):
+                    for group_table in group.values():
+                        if isinstance(group_table, dict):
+                            process_poetry_deps(group_table.get("dependencies"))
                             
+                process_poetry_deps(poetry.get("dev-dependencies"))
+
+            # 3. PDM
+            pdm = tool.get("pdm", {})
+            if isinstance(pdm, dict):
+                pdm_dev = pdm.get("dev-dependencies")
+                if isinstance(pdm_dev, list):
+                    for dep in pdm_dev:
+                        name, spec = parse_pep508(dep)
+                        if name:
+                            dependencies[name] = spec
+                elif isinstance(pdm_dev, dict):
+                    for k, v in pdm_dev.items():
+                        if isinstance(v, list):
+                            for dep in v:
+                                name, spec = parse_pep508(dep)
+                                if name:
+                                    dependencies[name] = spec
+                        else:
+                            if k.lower() == "python":
+                                continue
+                            if isinstance(v, str):
+                                dependencies[k] = v
+                            elif isinstance(v, dict):
+                                ver = v.get("version")
+                                dependencies[k] = ver if isinstance(ver, str) else "*"
+                                
+                pdm_deps = pdm.get("dependencies")
+                if isinstance(pdm_deps, list):
+                    for dep in pdm_deps:
+                        name, spec = parse_pep508(dep)
+                        if name:
+                            dependencies[name] = spec
+                elif isinstance(pdm_deps, dict):
+                    for k, v in pdm_deps.items():
+                        if isinstance(v, list):
+                            for dep in v:
+                                name, spec = parse_pep508(dep)
+                                if name:
+                                    dependencies[name] = spec
+                        else:
+                            if k.lower() == "python":
+                                continue
+                            if isinstance(v, str):
+                                dependencies[k] = v
+                            elif isinstance(v, dict):
+                                ver = v.get("version")
+                                dependencies[k] = ver if isinstance(ver, str) else "*"
+                                
         return dependencies
     except Exception as e:
         print(f"{COLOR_YELLOW}{ICON_WARN} Warning reading pyproject.toml: {e}{COLOR_RESET}")

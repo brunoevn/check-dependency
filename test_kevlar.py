@@ -1110,6 +1110,49 @@ class TestKevlar(unittest.TestCase):
         finally:
             os.remove(tmp_path)
 
+    def test_parse_pyproject_toml(self):
+        import tempfile
+        toml_content = (
+            "[project]\n"
+            "name = \"my-project\"\n"
+            "dependencies = [\n"
+            "    \"requests>=2.28.0; python_version < '3.8'\",\n"
+            "    \"flask[async] >= 2.0.0\",\n"
+            "]\n"
+            "[project.optional-dependencies]\n"
+            "test = [\"pytest>=7.0.0\", \"mock\"]\n"
+            "\n"
+            "[tool.poetry.dependencies]\n"
+            "python = \"^3.9\"\n"
+            "urllib3 = \"^1.26.0\"\n"
+            "toml = { version = \"^0.10.2\", extras = [\"test\"] }\n"
+            "git-dep = { git = \"https://github.com/foo/bar.git\" }\n"
+            "\n"
+            "[tool.poetry.group.dev.dependencies]\n"
+            "black = \"^22.3.0\"\n"
+            "\n"
+            "[tool.pdm.dev-dependencies]\n"
+            "pdm-group = [\"mypy>=0.950\", \"tox\"]\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".toml") as tmp:
+            tmp.write(toml_content)
+            tmp_path = tmp.name
+        try:
+            deps = kevlar.parse_pyproject_toml(tmp_path)
+            self.assertEqual(deps.get("requests"), ">=2.28.0")
+            self.assertEqual(deps.get("flask"), ">=2.0.0")
+            self.assertEqual(deps.get("pytest"), ">=7.0.0")
+            self.assertEqual(deps.get("mock"), "*")
+            self.assertNotIn("python", deps)
+            self.assertEqual(deps.get("urllib3"), "^1.26.0")
+            self.assertEqual(deps.get("toml"), "^0.10.2")
+            self.assertEqual(deps.get("git-dep"), "*")
+            self.assertEqual(deps.get("black"), "^22.3.0")
+            self.assertEqual(deps.get("mypy"), ">=0.950")
+            self.assertEqual(deps.get("tox"), "*")
+        finally:
+            os.remove(tmp_path)
+
     def test_match_line_for_dependency(self):
         # npm / php
         self.assertTrue(kevlar.match_line_for_dependency('  "lodash": "^4.17.21"', 'lodash', 'npm'))
