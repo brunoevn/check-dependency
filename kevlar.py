@@ -5060,8 +5060,8 @@ def validate_configuration_drift(results):
         decl_str = str(declared).strip()
         inst_str = str(installed).strip()
         
-        # Skip checking if declared constraint is a git URL, local path, workspace, patch, etc.
-        if (decl_str.startswith(("git+", "git:", "http:", "https:", "ssh:", "file:", "workspace:", "patch:", "portal:", "link:")) 
+        # Skip checking if declared constraint is a git URL, local path, workspace, patch, catalog reference, etc.
+        if (decl_str.startswith(("git+", "git:", "http:", "https:", "ssh:", "file:", "workspace:", "patch:", "portal:", "link:", "catalog:")) 
             or "github:" in decl_str.lower() 
             or decl_str.startswith((".", "/"))):
             continue

@@ -627,6 +627,14 @@ class TestKevlar(unittest.TestCase):
                 "installed": "0.23.0",
                 "status": "up-to-date",
                 "error": None
+            },
+            # 8. Catalog reference - should be skipped
+            {
+                "name": "catalog-pkg",
+                "declared": "catalog:",
+                "installed": "5.9.2",
+                "status": "up-to-date",
+                "error": None
             }
         ]
         
@@ -656,6 +664,9 @@ class TestKevlar(unittest.TestCase):
 
         # Verify npm-alias-pkg: no change
         self.assertEqual(results[6]["status"], "up-to-date")
+
+        # Verify catalog-pkg: no change
+        self.assertEqual(results[7]["status"], "up-to-date")
 
     def test_npm_transitive_same_name_no_drift(self):
         results = [
