@@ -44,7 +44,7 @@ class SafeWriter:
 sys.stdout = SafeWriter(sys.stdout)
 sys.stderr = SafeWriter(sys.stderr)
 
-VERSION = "1.9.3"
+VERSION = "1.9.4"
 
 # External APIs Configuration
 URL_NPM_REGISTRY = "https://registry.npmjs.org/"
@@ -1332,14 +1332,18 @@ def parse_pnpm_lock(filepath):
                         current_pkg, current_version = item[2]
                         break
                 
-                # Check transition out/in of the packages block at root level
-                if stripped.startswith("packages:"):
+                # Check transition out/in of the packages or snapshots block at root level
+                if stripped.startswith("packages:") or stripped.startswith("snapshots:"):
                     stack.append((indent, 'PACKAGES', None))
                     continue
                 
                 if current_state == 'PACKAGES':
                     # We are expecting package definitions as keys, e.g., '/direct-dep@1.0.1:'
-                    raw_pkg = stripped.rstrip(":").strip("'\"")
+                    # Remove trailing empty object if present, e.g. "key: {}" -> "key:"
+                    raw_line = stripped
+                    if raw_line.endswith("{}"):
+                        raw_line = raw_line[:-2].rstrip()
+                    raw_pkg = raw_line.rstrip(":").strip("'\"")
                     if raw_pkg.startswith("/"):
                         raw_pkg = raw_pkg[1:]
                     if "/" in raw_pkg and not raw_pkg.startswith("@"):
@@ -1350,17 +1354,15 @@ def parse_pnpm_lock(filepath):
                     pkg_name = None
                     version = None
                     
-                    if "@" in raw_pkg:
-                        if raw_pkg.startswith("@"):
-                            parts = raw_pkg[1:].rsplit("@", 1)
-                            if len(parts) == 2:
-                                pkg_name = "@" + parts[0]
-                                version = parts[1]
-                        else:
-                            parts = raw_pkg.rsplit("@", 1)
-                            if len(parts) == 2:
-                                pkg_name = parts[0]
-                                version = parts[1]
+                    # Robust separator '@' detection dividing package name from version/peer info
+                    if raw_pkg.startswith("@"):
+                        at_idx = raw_pkg.find("@", 1)
+                    else:
+                        at_idx = raw_pkg.find("@")
+                        
+                    if at_idx != -1:
+                        pkg_name = raw_pkg[:at_idx]
+                        version = raw_pkg[at_idx+1:]
                                 
                     if not pkg_name and "/" in raw_pkg:
                         parts = raw_pkg.rsplit("/", 1)
@@ -6202,7 +6204,7 @@ class HTMLReportTemplateProvider:
                 top: 0;
                 left: 50%;
                 transform: translate(-50%, 0);
-                width: 100%;
+                width: calc(100% - 40px);
                 max-width: 1000px;
                 border-radius: 0 0 12px 12px;
                 border-left: 1px solid var(--border-color);
@@ -6213,7 +6215,7 @@ class HTMLReportTemplateProvider:
                 backdrop-filter: blur(10px);
                 z-index: 1000;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-                padding: 10px 20px;
+                padding: 10px 15px;
                 box-sizing: border-box;
                 animation: desktopStickyIn 0.2s ease;
             }
@@ -7077,6 +7079,20 @@ class HTMLReportTemplateProvider:
         .btn-ai-prompt:hover {
             filter: brightness(1.15);
         }
+        
+        .changelog-section, .remediation-section {
+            margin-top: 12px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 10px;
+            margin-bottom: 12px;
+        }
+        
+        .card-details > .changelog-section:first-child,
+        .card-details > .remediation-section:first-child {
+            border-top: none;
+            padding-top: 0;
+            margin-top: 0;
+        }
     </style>
 </head>
 <body>
@@ -7324,8 +7340,6 @@ class HTMLReportTemplateProvider:
                 let badges = [];
                 if (error) {
                     badges.push('<span class="badge badge-error">Error</span>');
-                } else if (status === "up-to-date") {
-                    badges.push('<span class="badge badge-success">Up-to-date</span>');
                 } else if (status.includes("major")) {
                     badges.push('<span class="badge badge-error">Major Update</span>');
                 } else if (status === "minor") {
@@ -7548,7 +7562,7 @@ class HTMLReportTemplateProvider:
                 let remediation_button_html = '';
                 if (r.remediation && is_direct) {
                     remediation_button_html = 
-                        '<div class="remediation-section" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 12px;">' +
+                        '<div class="remediation-section">' +
                             '<div style="font-size: 12px; font-weight: 700; color: var(--success); margin-bottom: 8px;">Remediation:</div>' +
                             '<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">' +
                                 '<button class="btn-remediation" onclick="openRemediationModalByIndex(' + i + '); event.stopPropagation();">' +
@@ -7563,7 +7577,7 @@ class HTMLReportTemplateProvider:
                         '</div>';
                 } else if (ai_button_html) {
                     remediation_button_html = 
-                        '<div class="remediation-section" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 12px;">' +
+                        '<div class="remediation-section">' +
                             '<div style="font-size: 12px; font-weight: 700; color: var(--success); margin-bottom: 8px;">Remediation Support:</div>' +
                             ai_button_html +
                         '</div>';
@@ -7582,7 +7596,7 @@ class HTMLReportTemplateProvider:
                     }
                     if (buttons.length > 0) {
                         changelog_html = 
-                            '<div class="changelog-section" style="margin-top: 12px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-bottom: 12px;">' +
+                            '<div class="changelog-section">' +
                                 '<div style="font-size: 12px; font-weight: 700; color: var(--warning); margin-bottom: 8px;">Analysis & Migration Links:</div>' +
                                 buttons.join('\\n') +
                             '</div>';
