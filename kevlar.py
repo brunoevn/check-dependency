@@ -210,12 +210,24 @@ class SecureXMLBuilder:
         self.depth += 1
         if self.depth > self.max_depth:
             raise ValueError(f"XML parsing rejected: Node depth exceeds limit of {self.max_depth}")
-        self.total_size += len(name)
+        
+        if "}" in name and not name.startswith("{"):
+            name = "{" + name
+
+        processed_attrs = {}
         for k, v in attrs.items():
+            if "}" in k and not k.startswith("{"):
+                k = "{" + k
+            processed_attrs[k] = v
+
+        self.total_size += len(name)
+        for k, v in processed_attrs.items():
             self.total_size += len(k) + len(v)
+
         if self.total_size > self.max_expanded_size:
             raise ValueError("XML parsing rejected: Expanded data size limit exceeded")
-        element = ET.Element(name, attrs)
+
+        element = ET.Element(name, processed_attrs)
         if not self.stack:
             self.root = element
         else:
@@ -224,6 +236,8 @@ class SecureXMLBuilder:
 
     def end_element(self, name):
         self.depth -= 1
+        if "}" in name and not name.startswith("{"):
+            name = "{" + name
         if self.stack:
             self.stack.pop()
 
@@ -254,7 +268,7 @@ def parse_secure_xml(content, max_depth=15, max_expanded_size=10*1024*1024):
 
     content_bytes = content_str.encode("utf-8")
 
-    parser = xml.parsers.expat.ParserCreate(encoding="utf-8")
+    parser = xml.parsers.expat.ParserCreate(encoding="utf-8", namespace_separator="}")
     parser.StartElementHandler = builder.start_element
     parser.EndElementHandler = builder.end_element
     parser.CharacterDataHandler = builder.char_data

@@ -327,6 +327,36 @@ class TestKevlar(unittest.TestCase):
             kevlar.parse_secure_xml("<root>Some long text</root>", max_expanded_size=10)
         self.assertIn("Expanded data size limit exceeded", str(ctx.exception))
 
+    def test_secure_xml_namespaces(self):
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <pom:project xmlns:pom="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+            <pom:modelVersion>4.0.0</pom:modelVersion>
+            <pom:groupId>com.example</pom:groupId>
+            <pom:artifactId>my-app</pom:artifactId>
+            <pom:dependencies>
+                <pom:dependency pom:scope="compile">
+                    <pom:groupId>junit</pom:groupId>
+                    <pom:artifactId>junit</pom:artifactId>
+                </pom:dependency>
+            </pom:dependencies>
+        </pom:project>
+        """
+        root = kevlar.parse_secure_xml(xml_content)
+        self.assertIsNotNone(root)
+        self.assertEqual(root.tag, "{http://maven.apache.org/POM/4.0.0}project")
+        
+        # Test finding elements
+        model_version = root.find("{http://maven.apache.org/POM/4.0.0}modelVersion")
+        self.assertIsNotNone(model_version)
+        self.assertEqual(model_version.text, "4.0.0")
+        
+        # Test attributes
+        dependencies = root.find("{http://maven.apache.org/POM/4.0.0}dependencies")
+        self.assertIsNotNone(dependencies)
+        dep = dependencies.find("{http://maven.apache.org/POM/4.0.0}dependency")
+        self.assertIsNotNone(dep)
+        self.assertEqual(dep.attrib.get("{http://maven.apache.org/POM/4.0.0}scope"), "compile")
+
     def test_security_sanitize_error_message(self):
         import urllib.error
         import json
