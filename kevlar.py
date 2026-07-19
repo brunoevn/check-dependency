@@ -7719,7 +7719,7 @@ class HTMLReportTemplateProvider:
         }
         
         .diff-code {
-            padding: 16px;
+            padding: 16px 0;
             margin: 0;
             font-family: 'Consolas', 'Courier New', Courier, monospace;
             font-size: 13px;
@@ -7731,10 +7731,14 @@ class HTMLReportTemplateProvider:
         .diff-line {
             display: flex;
             width: 100%;
+            min-width: max-content;
+            box-sizing: border-box;
+            padding: 0 16px;
         }
         
         .diff-line-num {
-            width: 45px;
+            flex-shrink: 0;
+            width: 58px;
             text-align: right;
             padding-right: 12px;
             color: var(--text-muted);
@@ -7742,6 +7746,7 @@ class HTMLReportTemplateProvider:
             border-right: 1px solid var(--border-color);
             margin-right: 12px;
             font-size: 11px;
+            box-sizing: border-box;
         }
         
         .diff-line-content {
