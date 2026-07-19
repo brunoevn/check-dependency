@@ -6401,6 +6401,46 @@ def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ve
                 target_text = declared_ver
                 break
                 
+    if line_idx_to_change is None:
+        if tech == "maven":
+            for i in search_range:
+                m = re.search(r'<version>\s*(.*?)\s*</version>', lines[i], re.IGNORECASE)
+                if m:
+                    line_idx_to_change = i
+                    target_text = m.group(1)
+                    break
+        elif tech == "gradle":
+            for i in search_range:
+                m_ref = re.search(r'version\.ref\s*=\s*["\']([^"\']+)["\']', lines[i])
+                if m_ref:
+                    line_idx_to_change = i
+                    target_text = m_ref.group(1)
+                    break
+                m_eq = re.search(r'version\s*=\s*["\']([^"\']+)["\']', lines[i])
+                if m_eq:
+                    line_idx_to_change = i
+                    target_text = m_eq.group(1)
+                    break
+                m_colon = re.search(r'version:\s*["\']([^"\']+)["\']', lines[i])
+                if m_colon:
+                    line_idx_to_change = i
+                    target_text = m_colon.group(1)
+                    break
+                if package_name:
+                    pattern = re.escape(package_name) + r':([^\'"]+)'
+                    m_str = re.search(pattern, lines[i])
+                    if m_str:
+                        line_idx_to_change = i
+                        target_text = m_str.group(1)
+                        break
+        elif tech == "nuget":
+            for i in search_range:
+                m = re.search(r'Version\s*=\s*["\']([^"\']+)["\']', lines[i], re.IGNORECASE)
+                if m:
+                    line_idx_to_change = i
+                    target_text = m.group(1)
+                    break
+                    
     if line_idx_to_change is None and declared_ver:
         ver_digits = re.search(r'\d+\.\d+(?:\.\d+)?(?:\.\d+)?', declared_ver)
         if ver_digits:

@@ -2270,6 +2270,33 @@ class TestKevlar(unittest.TestCase):
             self.assertIn(props_path, [os.path.abspath(m) for m in manifests])
             self.assertIn(sub_csproj, [os.path.abspath(m) for m in manifests])
             
+            # 4. Test placeholders / properties matching for Maven, Gradle, NuGet
+            maven_pom = (
+                '<dependency>\n'
+                '    <groupId>org.springframework.security</groupId>\n'
+                '    <artifactId>spring-security-web</artifactId>\n'
+                '    <version>${org.spring-security.version}</version>\n'
+                '</dependency>\n'
+            )
+            pom_path = os.path.join(temp_dir, "pom.xml")
+            with open(pom_path, "w", encoding="utf-8") as f:
+                f.write(maven_pom)
+            diff_maven = kevlar.generate_remediation_diff(
+                pom_path, line_index=3, declared_ver="3.2.9.RELEASE", latest_ver="3.2.10.RELEASE", tech="maven", package_name="spring-security-web"
+            )
+            self.assertIsNotNone(diff_maven)
+            self.assertTrue(any('<span class="diff-add-chunk">3.2.10.RELEASE</span>' in item["html"] for item in diff_maven["suggested_code"]))
+            
+            gradle_build = 'implementation "org.springframework:spring-web:$springVersion"\n'
+            gradle_path = os.path.join(temp_dir, "build.gradle")
+            with open(gradle_path, "w", encoding="utf-8") as f:
+                f.write(gradle_build)
+            diff_gradle = kevlar.generate_remediation_diff(
+                gradle_path, line_index=1, declared_ver="4.3.5.RELEASE", latest_ver="4.3.30.RELEASE", tech="gradle", package_name="org.springframework:spring-web"
+            )
+            self.assertIsNotNone(diff_gradle)
+            self.assertTrue(any('<span class="diff-add-chunk">4.3.30.RELEASE</span>' in item["html"] for item in diff_gradle["suggested_code"]))
+            
         finally:
             shutil.rmtree(temp_dir)
 
