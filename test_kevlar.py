@@ -2295,6 +2295,12 @@ class TestKevlar(unittest.TestCase):
             self.assertEqual(diff_maven["line_number"], 3)  # Resolved to properties line
             self.assertTrue(any('<span class="diff-add-chunk">3.2.10.RELEASE</span>' in item["html"] for item in diff_maven["suggested_code"]))
             
+            # Test version mismatch verification (should skip this manifest file/property definition)
+            diff_maven_mismatch = kevlar.generate_remediation_diff(
+                pom_path, line_index=8, declared_ver="4.0.9.RELEASE", latest_ver="4.0.10.RELEASE", tech="maven", package_name="spring-security-web"
+            )
+            self.assertIsNone(diff_maven_mismatch)
+            
             gradle_build = (
                 'ext {\n'
                 '    springVersion = "4.3.5.RELEASE"\n'

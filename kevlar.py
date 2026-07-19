@@ -6544,6 +6544,7 @@ def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ve
             is_placeholder = True
             prop_name = target_text[1:]
             
+    resolved_version = None
     if is_placeholder and prop_name:
         resolved_path, resolved_line_idx, current_val = find_property_definition(manifest_path, prop_name, tech)
         if resolved_path and resolved_line_idx:
@@ -6553,8 +6554,31 @@ def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ve
                     lines = f.readlines()
                 line_idx_to_change = resolved_line_idx - 1
                 target_text = current_val
+                resolved_version = current_val
             except Exception:
                 pass
+    else:
+        resolved_version = target_text
+
+    # Verify that the resolved version matches the row's declared version to avoid cross-module mismatches
+    if declared_ver and resolved_version:
+        is_val_placeholder = False
+        if tech == "maven" and "${" in resolved_version:
+            is_val_placeholder = True
+        elif tech == "nuget" and "$(" in resolved_version:
+            is_val_placeholder = True
+        elif tech == "gradle" and "$" in resolved_version:
+            is_val_placeholder = True
+            
+        if not is_val_placeholder:
+            def clean_ver(v):
+                v = v.strip().lower()
+                if v.startswith('v'):
+                    v = v[1:]
+                v = re.sub(r'^[~^>=<!\s]+', '', v)
+                return v
+            if clean_ver(declared_ver) != clean_ver(resolved_version):
+                return None
     # --- End of property placeholder logic ---
 
     match_prefix = ""
