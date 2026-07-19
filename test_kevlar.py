@@ -869,7 +869,7 @@ class TestKevlar(unittest.TestCase):
                 content = f.read()
                 
             # Assert function definition and helper function in JS script block
-            self.assertIn("function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy)", content)
+            self.assertIn("function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy, manifestFile, manifestLine)", content)
             self.assertIn("function copiarPromptRemediacionByIndex(i)", content)
             
             # Assert correct JSON structures are embedded in the report

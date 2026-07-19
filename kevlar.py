@@ -8519,7 +8519,17 @@ class HTMLReportTemplateProvider:
             const proj_name = proj_path ? proj_path.split(/[\\/]/).pop() || "Project" : "Project";
             const required_by_str = required_by.join(', ');
             
-            copiarPromptRemediacion(name, ecosystem_name, curr_ver, latest_sm, latest_abs, alert_type, details_str, proj_name, proj_path, r.dep_type, required_by_str);
+            let manifest_file = "";
+            let manifest_line = "";
+            if (r.remediation) {
+                const rem = r.remediation.safe || r.remediation.major;
+                if (rem) {
+                    manifest_file = rem.manifest_path || "";
+                    manifest_line = rem.line_number || "";
+                }
+            }
+            
+            copiarPromptRemediacion(name, ecosystem_name, curr_ver, latest_sm, latest_abs, alert_type, details_str, proj_name, proj_path, r.dep_type, required_by_str, manifest_file, manifest_line);
         }
         
         // Floating toolbar logic on scroll
@@ -8947,7 +8957,7 @@ class HTMLReportTemplateProvider:
             }, 300);
         }
         
-        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy) {
+        function copiarPromptRemediacion(pkgName, ecosystem, currentVer, latestSameMajor, latestAbsolute, alertType, details, projName, projDir, depType, requiredBy, manifestFile, manifestLine) {
             if (window.event) {
                 window.event.stopPropagation();
             }
@@ -8978,9 +8988,14 @@ class HTMLReportTemplateProvider:
                 projectContext = ` (name: $${projName} directory: $${projDir})`;
             }
             
+            let manifestContext = "";
+            if (manifestFile) {
+                manifestContext = `\nThe version is declared/configured in manifest file: "$${manifestFile}"` + (manifestLine ? ` at line $${manifestLine}` : "");
+            }
+            
             const promptTexto = `Act as a Senior AppSec Expert and Principal Software Engineer specialized in the $${ecosystem} ecosystem.
 
-I have $${pkgDesc} in my project$${projectContext}, which is currently on version "$${currentVer}".
+I have $${pkgDesc} in my project$${projectContext}, which is currently on version "$${currentVer}".$${manifestContext}
 An alert of type "$${alertType}" has been detected.
 Detailed information/Associated alerts:
 $${details}
