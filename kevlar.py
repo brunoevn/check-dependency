@@ -92,6 +92,61 @@ BORDER_CHARS = {
 
 # Regex for parsing semantic version strings
 
+# Global mapping of supported ecosystems for OSV and manifest files
+# The "runner" key is populated at the bottom of the script to prevent NameErrors with checker functions.
+TECHNOLOGIES = {
+    "npm": {
+        "files": ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
+        "osv_ecosystem": "npm",
+        "runner": None
+    },
+    "pip": {
+        "files": ["requirements.txt", "poetry.lock", "Pipfile.lock", "pdm.lock", "pyproject.toml"],
+        "osv_ecosystem": "PyPI",
+        "runner": None
+    },
+    "nuget": {
+        "files": [".csproj", "packages.config", "project.assets.json"],
+        "osv_ecosystem": "NuGet",
+        "runner": None
+    },
+    "php": {
+        "files": ["composer.json", "composer.lock"],
+        "osv_ecosystem": "Packagist",
+        "runner": None
+    },
+    "maven": {
+        "files": ["pom.xml"],
+        "osv_ecosystem": "Maven",
+        "runner": None
+    },
+    "go": {
+        "files": ["go.mod"],
+        "osv_ecosystem": "Go",
+        "runner": None
+    },
+    "rust": {
+        "files": ["Cargo.toml", "Cargo.lock"],
+        "osv_ecosystem": "crates.io",
+        "runner": None
+    },
+    "ruby": {
+        "files": ["Gemfile", "Gemfile.lock"],
+        "osv_ecosystem": "RubyGems",
+        "runner": None
+    },
+    "gradle": {
+        "files": ["build.gradle", "build.gradle.kts", "gradle.lockfile", "libs.versions.toml"],
+        "osv_ecosystem": "Maven",
+        "runner": None
+    },
+    "android": {
+        "files": ["build.gradle", "build.gradle.kts", "gradle.lockfile", "libs.versions.toml"],
+        "osv_ecosystem": "Maven",
+        "runner": None
+    }
+}
+
 # Cached Regex patterns for performance
 RE_SEMVER_ALPHA = re.compile(r'([a-zA-Z]+.*)$')
 RE_SEMVER_DIGITS = re.compile(r'\d+')
@@ -197,6 +252,214 @@ def _detect_xml_encoding(content):
 
     return "utf-8"
 
+def calculate_cvss2_score(vector_str):
+    """Calculates base CVSS v2 score from a vector string."""
+    try:
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
+        
+        av = {"L": 0.395, "A": 0.646, "N": 1.0}.get(parts.get("AV"), 1.0)
+        ac = {"H": 0.35, "M": 0.61, "L": 0.71}.get(parts.get("AC"), 0.71)
+        au = {"M": 0.45, "S": 0.56, "N": 0.704}.get(parts.get("Au"), 0.704)
+        
+        c = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("C"), 0.0)
+        i = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("I"), 0.0)
+        a = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("A"), 0.0)
+        
+        impact = 10.41 * (1 - (1 - c) * (1 - i) * (1 - a))
+        exploitability = 20.0 * av * ac * au
+        
+        if impact == 0:
+            return 0.0
+            
+        score = ((0.6 * impact) + (0.4 * exploitability) - 1.5) * 1.176
+        return round(score, 1)
+    except Exception:
+        return None
+
+def calculate_cvss3_score(vector_str):
+    """Calculates base CVSS v3.x score from a vector string."""
+    try:
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
+        
+        av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}.get(parts.get("AV"), 0.85)
+        ac = {"L": 0.77, "H": 0.44}.get(parts.get("AC"), 0.77)
+        ui = {"N": 0.85, "R": 0.62}.get(parts.get("UI"), 0.85)
+        scope = parts.get("S", "U")
+        
+        if scope == "C":
+            pr = {"N": 0.85, "L": 0.68, "H": 0.50}.get(parts.get("PR"), 0.85)
+        else:
+            pr = {"N": 0.85, "L": 0.62, "H": 0.27}.get(parts.get("PR"), 0.85)
+            
+        c = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("C"), 0.0)
+        i = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("I"), 0.0)
+        a = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("A"), 0.0)
+        
+        iss = 1 - (1 - c) * (1 - i) * (1 - a)
+        
+        if scope == "C":
+            impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
+        else:
+            impact = 6.42 * iss
+            
+        exploitability = 8.22 * av * ac * pr * ui
+        
+        if impact <= 0:
+            return 0.0
+            
+        if scope == "C":
+            score = 1.08 * (impact + exploitability)
+        else:
+            score = impact + exploitability
+            
+        score_val = min(score, 10.0)
+        int_val = int(score_val * 100)
+        if int_val % 10 == 0:
+            return int_val / 100.0
+        else:
+            return (int_val - (int_val % 10) + 10) / 100.0
+            
+    except Exception:
+        return None
+
+def calculate_cvss4_score_approx(vector_str):
+    """Approximates base CVSS v4.0 score by translating metrics to v3 equivalent."""
+    try:
+        parts = {}
+        for p in vector_str.split("/"):
+            if p.count(":") == 1:
+                k, v = p.split(":")
+                parts[k] = v
+        
+        av = parts.get("AV", "N")
+        ac = parts.get("AC", "L")
+        if parts.get("AT") == "P":
+            ac = "H"
+        pr = parts.get("PR", "N")
+        ui = "N"
+        if parts.get("UI") in ("A", "R"):
+            ui = "R"
+            
+        scope = "U"
+        if parts.get("SC") in ("H", "L") or parts.get("SI") in ("H", "L") or parts.get("SA") in ("H", "L"):
+            scope = "C"
+            
+        c = parts.get("VC", "N")
+        i = parts.get("VI", "N")
+        a = parts.get("VA", "N")
+        
+        v3_vector = f"CVSS:3.1/AV:{av}/AC:{ac}/PR:{pr}/UI:{ui}/S:{scope}/C:{c}/I:{i}/A:{a}"
+        return calculate_cvss3_score(v3_vector)
+    except Exception:
+        return None
+
+def get_severity_level(vuln):
+    """Determines the severity level (malicious, critical, high, medium, low, unknown) of a vulnerability."""
+    # FIXED: Unified severity heuristics globally
+    if not vuln:
+        return "unknown"
+    vuln_id = ""
+    if isinstance(vuln, dict):
+        vuln_id = vuln.get("id", "")
+        if vuln_id and vuln_id.startswith("MAL-"):
+            return "malicious"
+        severity = vuln.get("severity", "UNKNOWN")
+    else:
+        severity = str(vuln)
+        
+    sev_upper = severity.upper()
+    
+    # 1. Exact matches or plain text checks first
+    if "CRITICAL" in sev_upper:
+        return "critical"
+    if "HIGH" in sev_upper:
+        return "high"
+    if "MEDIUM" in sev_upper or "MODERATE" in sev_upper:
+        return "medium"
+    if "LOW" in sev_upper:
+        return "low"
+    if "MALICIOUS" in sev_upper:
+        return "malicious"
+        
+    # 2. CVSS score calculations
+    if "CVSS" in sev_upper or "AV:" in sev_upper:
+        m4 = re.search(r'(CVSS:4\.[0-9a-zA-Z/:.]+)', sev_upper)
+        if m4:
+            vector = m4.group(1)
+            score = calculate_cvss4_score_approx(vector)
+            if score is not None:
+                if score >= 9.0: return "critical"
+                elif score >= 7.0: return "high"
+                elif score >= 4.0: return "medium"
+                elif score >= 0.1: return "low"
+                
+        m3 = re.search(r'(CVSS:3\.[0-9a-zA-Z/:.]+)', sev_upper)
+        if m3:
+            vector = m3.group(1)
+            score = calculate_cvss3_score(vector)
+            if score is not None:
+                if score >= 9.0: return "critical"
+                elif score >= 7.0: return "high"
+                elif score >= 4.0: return "medium"
+                elif score >= 0.1: return "low"
+                
+        vector2 = None
+        m2 = re.search(r'(CVSS:2\.[0-9a-zA-Z/:.]+)', sev_upper)
+        if m2:
+            vector2 = m2.group(1)
+        elif "AV:" in sev_upper:
+            m_raw2 = re.search(r'(AV:[NAL]/AC:[HML]/Au:[MSN]/C:[NPC]/I:[NPC]/A:[NPC])', sev_upper)
+            if m_raw2:
+                vector2 = m_raw2.group(1)
+                
+        if vector2:
+            score = calculate_cvss2_score(vector2)
+            if score is not None:
+                if score >= 9.0: return "critical"
+                elif score >= 7.0: return "high"
+                elif score >= 4.0: return "medium"
+                elif score >= 0.1: return "low"
+
+    # 3. Fallback metric-based heuristic (similar to normalize_severity_to_text)
+    s = severity.lower()
+    import re as _re
+    def _metric(vector, key):
+        m = _re.search(r'/' + key.lower() + r'(?=[:/])([nhml])', vector)
+        if not m:
+            m = _re.search(r'(?:^|/)' + key.lower() + r':([nhml])', vector)
+        return m.group(1) if m else 'n'
+        
+    if 'cvss:3' in s or 'cvss:2' in s or 'av:' in s:
+        c = _metric(s, 'C'); i = _metric(s, 'I'); a = _metric(s, 'A')
+        sc = _metric(s, 'S')
+        if sc == 'c' and (c == 'h' or i == 'h'):
+            return "critical"
+        if c == 'h' or i == 'h' or a == 'h':
+            return "high"
+        if c == 'l' or i == 'l' or a == 'l':
+            return "medium"
+        return "low"
+        
+    if 'cvss:4' in s:
+        vc = _metric(s, 'VC'); vi = _metric(s, 'VI'); va = _metric(s, 'VA')
+        if vc == 'h' and vi == 'h':
+            return "critical"
+        if vc == 'h' or vi == 'h' or va == 'h':
+            return "high"
+        if vc == 'l' or vi == 'l' or va == 'l':
+            return "medium"
+        return "low"
+        
+    return "unknown"
+
 class SecureXMLBuilder:
     def __init__(self, max_depth=15, max_expanded_size=10 * 1024 * 1024):
         self.max_depth = max_depth
@@ -256,19 +519,35 @@ class SecureXMLBuilder:
 def parse_secure_xml(content, max_depth=15, max_expanded_size=10*1024*1024):
     builder = SecureXMLBuilder(max_depth, max_expanded_size)
     
-    # 3. Asegurar que el manejo de encodings mediante sniffing de BOM se mantenga intacto
+    encoding = "utf-8"
     if isinstance(content, bytes):
         encoding = _detect_xml_encoding(content)
+        try:
+            prefix = content[:1024].decode("latin-1", errors="ignore")
+            m = re.search(r'<\?xml\s+[^>]*encoding\s*=\s*["\']([^"\']+)["\']', prefix, re.IGNORECASE)
+            if m:
+                encoding = m.group(1)
+        except Exception:
+            pass
         try:
             content_str = content.decode(encoding, errors='replace')
         except Exception:
             content_str = content.decode('latin-1', errors='replace')
+            encoding = 'latin-1'
     else:
         content_str = content
+        m = re.search(r'<\?xml\s+[^>]*encoding\s*=\s*["\']([^"\']+)["\']', content_str[:1024], re.IGNORECASE)
+        if m:
+            encoding = m.group(1)
 
-    content_bytes = content_str.encode("utf-8")
+    # FIXED: Re-encode string back to the detected/declared encoding and pass it to ParserCreate
+    try:
+        content_bytes = content_str.encode(encoding, errors='replace')
+    except Exception:
+        content_bytes = content_str.encode('utf-8', errors='replace')
+        encoding = 'utf-8'
 
-    parser = xml.parsers.expat.ParserCreate(encoding="utf-8", namespace_separator="}")
+    parser = xml.parsers.expat.ParserCreate(encoding=encoding, namespace_separator="}")
     parser.StartElementHandler = builder.start_element
     parser.EndElementHandler = builder.end_element
     parser.CharacterDataHandler = builder.char_data
@@ -9093,62 +9372,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
     def js_arg(val):
         return escape_html(escape_js_string(val))
 
-    # Helper: normalize OSV severity field to simple text level
-    def normalize_severity_to_text(vuln: dict) -> str:
-        """Convert a CVSS vector string or plain text to malicious/critical/high/medium/low/unknown."""
-        if not vuln:
-            return "unknown"
-        vuln_id = vuln.get("id", "")
-        if vuln_id and vuln_id.startswith("MAL-"):
-            return "malicious"
-        severity_raw = vuln.get("severity", "")
-        if not severity_raw:
-            return "unknown"
-        s = severity_raw.lower()
-        # Plain text labels (already normalized, e.g. from database_specific.severity)
-        if s in ("malicious", "critical", "high", "medium", "moderate", "low", "unknown"):
-            return "medium" if s == "moderate" else s
-        # Fallback: check if any known severity keywords appear as words
-        import re as _re
-        if _re.search(r'\bcritical\b', s):
-            return "critical"
-        if _re.search(r'\bhigh\b', s):
-            return "high"
-        if _re.search(r'\b(medium|moderate)\b', s):
-            return "medium"
-        if _re.search(r'\blow\b', s):
-            return "low"
-        # CVSS v3/v2 vector: parse C: (Confidentiality), I: (Integrity), A: (Availability) metrics
-        # Note: string is already lowercased, so metric values are h/l/n/m
-        # Use word-boundary-like anchors to avoid /VC: matching for /C:
-        def _metric(vector, key):
-            # Match /<exact_KEY>:<value> - key must be exact (e.g. /c: not /ac: or /vc:)
-            m = _re.search(r'/' + key.lower() + r'(?=[:/])([nhml])', vector)
-            if not m:
-                # Try pattern: /KEY:VALUE where KEY followed immediately by colon
-                m = _re.search(r'(?:^|/)' + key.lower() + r':([nhml])', vector)
-            return m.group(1) if m else 'n'
-        if 'cvss:3' in s or 'cvss:2' in s:
-            c = _metric(s, 'C'); i = _metric(s, 'I'); a = _metric(s, 'A')
-            sc = _metric(s, 'S')
-            if sc == 'c' and (c == 'h' or i == 'h'):
-                return "critical"
-            if c == 'h' or i == 'h' or a == 'h':
-                return "high"
-            if c == 'l' or i == 'l' or a == 'l':
-                return "medium"
-            return "low"
-        if 'cvss:4' in s:
-            # CVSS v4 metrics: VC (Vulnerable Confidentiality), VI, VA
-            vc = _metric(s, 'VC'); vi = _metric(s, 'VI'); va = _metric(s, 'VA')
-            if vc == 'h' and vi == 'h':
-                return "critical"
-            if vc == 'h' or vi == 'h' or va == 'h':
-                return "high"
-            if vc == 'l' or vi == 'l' or va == 'l':
-                return "medium"
-            return "low"
-        return "unknown"
+    # normalize_severity_to_text was moved to the global scope as get_severity_level
 
     try:
         # Calculate summary statistics
@@ -9175,7 +9399,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         
         for r in results:
             for v in r.get("vulnerabilities", []):
-                level = normalize_severity_to_text(v)
+                level = get_severity_level(v)
                 if level == "malicious":
                     malicious += 1
                 elif level == "critical":
@@ -9324,7 +9548,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 vid = v["id"]
                 if vid not in vulnerability_store:
                     vulnerability_store[vid] = {
-                        "severity": normalize_severity_to_text(v),
+                        "severity": get_severity_level(v),
                         "summary": v.get("summary", ""),
                         "details": v.get("details", "")
                     }
@@ -9332,7 +9556,7 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
                 vid = sv["id"]
                 if vid not in vulnerability_store:
                     vulnerability_store[vid] = {
-                        "severity": normalize_severity_to_text(sv),
+                        "severity": get_severity_level(sv),
                         "summary": sv.get("summary", ""),
                         "details": sv.get("details", "")
                     }
@@ -9418,8 +9642,9 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
         else:
             json_packages.sort(key=lambda p: p["name"].lower())
 
-        escaped_packages_json = json.dumps(json_packages).replace("<", "\\u003c").replace(">", "\\u003e")
-        escaped_vulns_json = json.dumps(vulnerability_store).replace("<", "\\u003c").replace(">", "\\u003e")
+        # FIXED: XSS Mitigation via JSON serialization
+        escaped_packages_json = json.dumps(json_packages).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        escaped_vulns_json = json.dumps(vulnerability_store).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
         # HTML Master Template rendering
         template_str = HTMLReportTemplateProvider.get_template()
@@ -9461,58 +9686,18 @@ def export_html_report(results, pkg_data, filepath, vuls_enabled=False):
 # CLI Entrypoint
 # ==============================================================================
 
-TECHNOLOGIES = {
-    "npm": {
-        "files": ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
-        "osv_ecosystem": "npm",
-        "runner": run_npm_checker
-    },
-    "pip": {
-        "files": ["requirements.txt", "poetry.lock", "Pipfile.lock", "pdm.lock", "pyproject.toml"],
-        "osv_ecosystem": "PyPI",
-        "runner": run_pip_checker
-    },
-    "nuget": {
-        "files": [".csproj", "packages.config", "project.assets.json"],
-        "osv_ecosystem": "NuGet",
-        "runner": run_nuget_checker
-    },
-    "php": {
-        "files": ["composer.json", "composer.lock"],
-        "osv_ecosystem": "Packagist",
-        "runner": run_composer_checker
-    },
-    "maven": {
-        "files": ["pom.xml"],
-        "osv_ecosystem": "Maven",
-        "runner": run_maven_checker
-    },
-    "go": {
-        "files": ["go.mod"],
-        "osv_ecosystem": "Go",
-        "runner": run_go_checker
-    },
-    "rust": {
-        "files": ["Cargo.toml", "Cargo.lock"],
-        "osv_ecosystem": "crates.io",
-        "runner": run_rust_checker
-    },
-    "ruby": {
-        "files": ["Gemfile", "Gemfile.lock"],
-        "osv_ecosystem": "RubyGems",
-        "runner": run_ruby_checker
-    },
-    "gradle": {
-        "files": ["build.gradle", "build.gradle.kts", "gradle.lockfile", "libs.versions.toml"],
-        "osv_ecosystem": "Maven",
-        "runner": run_gradle_checker
-    },
-    "android": {
-        "files": ["build.gradle", "build.gradle.kts", "gradle.lockfile", "libs.versions.toml"],
-        "osv_ecosystem": "Maven",
-        "runner": run_gradle_checker
-    }
-}
+# Populate runner functions in global TECHNOLOGIES dictionary now that functions are defined
+TECHNOLOGIES["npm"]["runner"] = run_npm_checker
+TECHNOLOGIES["pip"]["runner"] = run_pip_checker
+TECHNOLOGIES["nuget"]["runner"] = run_nuget_checker
+TECHNOLOGIES["php"]["runner"] = run_composer_checker
+TECHNOLOGIES["maven"]["runner"] = run_maven_checker
+TECHNOLOGIES["go"]["runner"] = run_go_checker
+TECHNOLOGIES["rust"]["runner"] = run_rust_checker
+TECHNOLOGIES["ruby"]["runner"] = run_ruby_checker
+TECHNOLOGIES["gradle"]["runner"] = run_gradle_checker
+TECHNOLOGIES["android"]["runner"] = run_gradle_checker
+
 
 def detect_technologies(dir_path):
     """Detects which technologies are present in a given directory."""
@@ -9568,171 +9753,7 @@ def find_projects_recursively(base_path):
                 
     return projects
 
-def calculate_cvss2_score(vector_str):
-    """Calculates base CVSS v2 score from a vector string."""
-    try:
-        parts = {}
-        for p in vector_str.split("/"):
-            if p.count(":") == 1:
-                k, v = p.split(":")
-                parts[k] = v
-        
-        av = {"L": 0.395, "A": 0.646, "N": 1.0}.get(parts.get("AV"), 1.0)
-        ac = {"H": 0.35, "M": 0.61, "L": 0.71}.get(parts.get("AC"), 0.71)
-        au = {"M": 0.45, "S": 0.56, "N": 0.704}.get(parts.get("Au"), 0.704)
-        
-        c = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("C"), 0.0)
-        i = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("I"), 0.0)
-        a = {"N": 0.0, "P": 0.275, "C": 0.660}.get(parts.get("A"), 0.0)
-        
-        impact = 10.41 * (1 - (1 - c) * (1 - i) * (1 - a))
-        exploitability = 20.0 * av * ac * au
-        
-        if impact == 0:
-            return 0.0
-            
-        score = ((0.6 * impact) + (0.4 * exploitability) - 1.5) * 1.176
-        return round(score, 1)
-    except Exception:
-        return None
-
-def calculate_cvss3_score(vector_str):
-    """Calculates base CVSS v3.x score from a vector string."""
-    try:
-        parts = {}
-        for p in vector_str.split("/"):
-            if p.count(":") == 1:
-                k, v = p.split(":")
-                parts[k] = v
-        
-        av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.20}.get(parts.get("AV"), 0.85)
-        ac = {"L": 0.77, "H": 0.44}.get(parts.get("AC"), 0.77)
-        ui = {"N": 0.85, "R": 0.62}.get(parts.get("UI"), 0.85)
-        scope = parts.get("S", "U")
-        
-        if scope == "C":
-            pr = {"N": 0.85, "L": 0.68, "H": 0.50}.get(parts.get("PR"), 0.85)
-        else:
-            pr = {"N": 0.85, "L": 0.62, "H": 0.27}.get(parts.get("PR"), 0.85)
-            
-        c = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("C"), 0.0)
-        i = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("I"), 0.0)
-        a = {"N": 0.0, "L": 0.22, "H": 0.56}.get(parts.get("A"), 0.0)
-        
-        iss = 1 - (1 - c) * (1 - i) * (1 - a)
-        
-        if scope == "C":
-            impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15
-        else:
-            impact = 6.42 * iss
-            
-        exploitability = 8.22 * av * ac * pr * ui
-        
-        if impact <= 0:
-            return 0.0
-            
-        if scope == "C":
-            score = 1.08 * (impact + exploitability)
-        else:
-            score = impact + exploitability
-            
-        score_val = min(score, 10.0)
-        int_val = int(score_val * 100)
-        if int_val % 10 == 0:
-            return int_val / 100.0
-        else:
-            return (int_val - (int_val % 10) + 10) / 100.0
-            
-    except Exception:
-        return None
-
-def calculate_cvss4_score_approx(vector_str):
-    """Approximates base CVSS v4.0 score by translating metrics to v3 equivalent."""
-    try:
-        parts = {}
-        for p in vector_str.split("/"):
-            if p.count(":") == 1:
-                k, v = p.split(":")
-                parts[k] = v
-        
-        av = parts.get("AV", "N")
-        ac = parts.get("AC", "L")
-        if parts.get("AT") == "P":
-            ac = "H"
-        pr = parts.get("PR", "N")
-        ui = "N"
-        if parts.get("UI") in ("A", "R"):
-            ui = "R"
-            
-        scope = "U"
-        if parts.get("SC") in ("H", "L") or parts.get("SI") in ("H", "L") or parts.get("SA") in ("H", "L"):
-            scope = "C"
-            
-        c = parts.get("VC", "N")
-        i = parts.get("VI", "N")
-        a = parts.get("VA", "N")
-        
-        v3_vector = f"CVSS:3.1/AV:{av}/AC:{ac}/PR:{pr}/UI:{ui}/S:{scope}/C:{c}/I:{i}/A:{a}"
-        return calculate_cvss3_score(v3_vector)
-    except Exception:
-        return None
-
-def get_severity_level(vuln):
-    """Determines the severity level (malicious, critical, high, medium, low, unknown) of a vulnerability."""
-    vuln_id = vuln.get("id", "")
-    if vuln_id and vuln_id.startswith("MAL-"):
-        return "malicious"
-    severity = vuln.get("severity", "UNKNOWN")
-    sev_upper = severity.upper()
-    
-    if "CRITICAL" in sev_upper:
-        return "critical"
-    if "HIGH" in sev_upper:
-        return "high"
-    if "MEDIUM" in sev_upper or "MODERATE" in sev_upper:
-        return "medium"
-    if "LOW" in sev_upper:
-        return "low"
-        
-    if "CVSS" in sev_upper or "AV:" in sev_upper:
-        m4 = re.search(r'(CVSS:4\.[0-9a-zA-Z/:.]+)', sev_upper)
-        if m4:
-            vector = m4.group(1)
-            score = calculate_cvss4_score_approx(vector)
-            if score is not None:
-                if score >= 9.0: return "critical"
-                elif score >= 7.0: return "high"
-                elif score >= 4.0: return "medium"
-                elif score >= 0.1: return "low"
-                
-        m3 = re.search(r'(CVSS:3\.[0-9a-zA-Z/:.]+)', sev_upper)
-        if m3:
-            vector = m3.group(1)
-            score = calculate_cvss3_score(vector)
-            if score is not None:
-                if score >= 9.0: return "critical"
-                elif score >= 7.0: return "high"
-                elif score >= 4.0: return "medium"
-                elif score >= 0.1: return "low"
-                
-        vector2 = None
-        m2 = re.search(r'(CVSS:2\.[0-9a-zA-Z/:.]+)', sev_upper)
-        if m2:
-            vector2 = m2.group(1)
-        elif "AV:" in sev_upper:
-            m_raw2 = re.search(r'(AV:[NAL]/AC:[HML]/Au:[MSN]/C:[NPC]/I:[NPC]/A:[NPC])', sev_upper)
-            if m_raw2:
-                vector2 = m_raw2.group(1)
-                
-        if vector2:
-            score = calculate_cvss2_score(vector2)
-            if score is not None:
-                if score >= 9.0: return "critical"
-                elif score >= 7.0: return "high"
-                elif score >= 4.0: return "medium"
-                elif score >= 0.1: return "low"
-                
-    return "unknown"
+# Old get_severity_level and CVSS calculation functions were removed to unify the severity logic
 
 def check_pipeline_failure(results, fail_config):
     """Checks if the vulnerability thresholds are breached to fail the build.
