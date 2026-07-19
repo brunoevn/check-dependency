@@ -2270,31 +2270,45 @@ class TestKevlar(unittest.TestCase):
             self.assertIn(props_path, [os.path.abspath(m) for m in manifests])
             self.assertIn(sub_csproj, [os.path.abspath(m) for m in manifests])
             
-            # 4. Test placeholders / properties matching for Maven, Gradle, NuGet
+            # 4. Test placeholders / properties matching & resolution to definition lines
             maven_pom = (
-                '<dependency>\n'
-                '    <groupId>org.springframework.security</groupId>\n'
-                '    <artifactId>spring-security-web</artifactId>\n'
-                '    <version>${org.spring-security.version}</version>\n'
-                '</dependency>\n'
+                '<project>\n'
+                '    <properties>\n'
+                '        <org.spring-security.version>3.2.9.RELEASE</org.spring-security.version>\n'
+                '    </properties>\n'
+                '    <dependencies>\n'
+                '        <dependency>\n'
+                '            <groupId>org.springframework.security</groupId>\n'
+                '            <artifactId>spring-security-web</artifactId>\n'
+                '            <version>${org.spring-security.version}</version>\n'
+                '        </dependency>\n'
+                '    </dependencies>\n'
+                '</project>\n'
             )
             pom_path = os.path.join(temp_dir, "pom.xml")
             with open(pom_path, "w", encoding="utf-8") as f:
                 f.write(maven_pom)
             diff_maven = kevlar.generate_remediation_diff(
-                pom_path, line_index=3, declared_ver="3.2.9.RELEASE", latest_ver="3.2.10.RELEASE", tech="maven", package_name="spring-security-web"
+                pom_path, line_index=8, declared_ver="3.2.9.RELEASE", latest_ver="3.2.10.RELEASE", tech="maven", package_name="spring-security-web"
             )
             self.assertIsNotNone(diff_maven)
+            self.assertEqual(diff_maven["line_number"], 3)  # Resolved to properties line
             self.assertTrue(any('<span class="diff-add-chunk">3.2.10.RELEASE</span>' in item["html"] for item in diff_maven["suggested_code"]))
             
-            gradle_build = 'implementation "org.springframework:spring-web:$springVersion"\n'
+            gradle_build = (
+                'ext {\n'
+                '    springVersion = "4.3.5.RELEASE"\n'
+                '}\n'
+                'implementation "org.springframework:spring-web:$springVersion"\n'
+            )
             gradle_path = os.path.join(temp_dir, "build.gradle")
             with open(gradle_path, "w", encoding="utf-8") as f:
                 f.write(gradle_build)
             diff_gradle = kevlar.generate_remediation_diff(
-                gradle_path, line_index=1, declared_ver="4.3.5.RELEASE", latest_ver="4.3.30.RELEASE", tech="gradle", package_name="org.springframework:spring-web"
+                gradle_path, line_index=4, declared_ver="4.3.5.RELEASE", latest_ver="4.3.30.RELEASE", tech="gradle", package_name="org.springframework:spring-web"
             )
             self.assertIsNotNone(diff_gradle)
+            self.assertEqual(diff_gradle["line_number"], 2)  # Resolved to ext block variable line
             self.assertTrue(any('<span class="diff-add-chunk">4.3.30.RELEASE</span>' in item["html"] for item in diff_gradle["suggested_code"]))
             
         finally:

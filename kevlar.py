@@ -6471,7 +6471,92 @@ def generate_remediation_diff(manifest_path, line_index, declared_ver, latest_ve
 
     if not target_text:
         return None
-        
+
+    # --- Property placeholder resolution nested helpers & logic ---
+    def _search_lines_for_property(lines_list, prop_name_val, tech_type):
+        if tech_type == "maven" or tech_type == "nuget":
+            pattern = r'<\s*' + re.escape(prop_name_val) + r'\s*>\s*(.*?)\s*<\s*/\s*' + re.escape(prop_name_val) + r'\s*>'
+            for idx_p, line_p in enumerate(lines_list):
+                m_p = re.search(pattern, line_p, re.IGNORECASE)
+                if m_p:
+                    return idx_p + 1, m_p.group(1)
+        elif tech_type == "gradle":
+            pattern = r'^\s*([a-zA-Z0-9_.-]+)?\s*' + re.escape(prop_name_val) + r'\s*=\s*["\']([^"\']+)["\']'
+            for idx_p, line_p in enumerate(lines_list):
+                m_p = re.search(pattern, line_p)
+                if m_p:
+                    return idx_p + 1, m_p.group(2)
+        return None, None
+
+    def find_property_definition(current_path, prop_name_val, tech_type):
+        try:
+            with open(current_path, "r", encoding="utf-8", errors="ignore") as f_p:
+                lines_list = f_p.readlines()
+        except Exception:
+            return None, None, None
+            
+        line_idx_p, val_p = _search_lines_for_property(lines_list, prop_name_val, tech_type)
+        if line_idx_p is not None:
+            return current_path, line_idx_p, val_p
+            
+        if tech_type == "maven":
+            curr_dir_p = current_path
+            for _ in range(5):
+                curr_dir_p = os.path.dirname(curr_dir_p)
+                parent_dir_p = os.path.dirname(curr_dir_p)
+                if parent_dir_p == curr_dir_p:
+                    break
+                parent_pom = os.path.join(parent_dir_p, "pom.xml")
+                if os.path.exists(parent_pom):
+                    try:
+                        with open(parent_pom, "r", encoding="utf-8", errors="ignore") as f_p:
+                            parent_lines = f_p.readlines()
+                        line_idx_p, val_p = _search_lines_for_property(parent_lines, prop_name_val, tech_type)
+                        if line_idx_p is not None:
+                            return parent_pom, line_idx_p, val_p
+                    except Exception:
+                        pass
+                    curr_dir_p = parent_pom
+                else:
+                    break
+                    
+        return None, None, None
+
+    is_placeholder = False
+    prop_name = None
+    
+    if tech == "maven":
+        m = re.match(r'^\s*\$\{\s*(.*?)\s*\}\s*$', target_text)
+        if m:
+            is_placeholder = True
+            prop_name = m.group(1)
+    elif tech == "nuget":
+        m = re.match(r'^\s*\$\(\s*(.*?)\s*\)\s*$', target_text)
+        if m:
+            is_placeholder = True
+            prop_name = m.group(1)
+    elif tech == "gradle":
+        is_toml_ref = "version.ref" in lines[line_idx_to_change]
+        if is_toml_ref:
+            is_placeholder = True
+            prop_name = target_text
+        elif target_text.startswith('$'):
+            is_placeholder = True
+            prop_name = target_text[1:]
+            
+    if is_placeholder and prop_name:
+        resolved_path, resolved_line_idx, current_val = find_property_definition(manifest_path, prop_name, tech)
+        if resolved_path and resolved_line_idx:
+            manifest_path = resolved_path
+            try:
+                with open(manifest_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                line_idx_to_change = resolved_line_idx - 1
+                target_text = current_val
+            except Exception:
+                pass
+    # --- End of property placeholder logic ---
+
     match_prefix = ""
     match_version = target_text or ""
     if target_text:
